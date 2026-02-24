@@ -16,6 +16,7 @@ final class AirplayService
     private var encoder: HLSEncoder?
     private let server = HLSServer()
     private var didSignalReady = false
+    private var streamSessionID = UUID().uuidString
 
     init(port: UInt16 = 8080, minimumBufferSeconds: Double = 5.0, segmentDurationSeconds: Double = 1.0)
     {
@@ -24,12 +25,12 @@ final class AirplayService
         self.segmentDurationSeconds = max(0.1, segmentDurationSeconds)
     }
 
-    var playlistURLString: String { "http://127.0.0.1:\(port)/hls.m3u8" }
+    var playlistURLString: String { "http://127.0.0.1:\(port)/hls.m3u8?sid=\(streamSessionID)" }
     var localIPAddress: String? { Self.preferredIPv4() }
     var airPlayPlaylistURLString: String
     {
         let host = localIPAddress ?? "127.0.0.1"
-        return "http://\(host):\(port)/hls.m3u8"
+        return "http://\(host):\(port)/hls.m3u8?sid=\(streamSessionID)"
     }
 
     func startServerIfNeeded()
@@ -39,6 +40,8 @@ final class AirplayService
 
     func startStream(outputSize: CGSize, fps: Double)
     {
+        streamSessionID = UUID().uuidString
+        server.sessionToken = streamSessionID
         configureEncoder(outputSize: outputSize, fps: fps)
         startServerIfNeeded()
     }
@@ -46,6 +49,8 @@ final class AirplayService
     func resetStream()
     {
         encoder = nil
+        streamSessionID = UUID().uuidString
+        server.sessionToken = streamSessionID
         server.resetStream()
         didSignalReady = false
     }

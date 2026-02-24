@@ -322,102 +322,97 @@ struct ContentView: View
         )
     }
 
-    private var comparePresented: Binding<Bool>
-    {
-        Binding(
-            get: { viewModel.isShowingCompare },
-            set: { viewModel.setComparePresented($0) }
-        )
-    }
-    
     var body: some View
     {
-        AirplayCompareSheetView(
-            isPresented: comparePresented,
-            pixelBuffer: viewModel.comparePixelBuffer,
-            frameCount: viewModel.frameCount,
-            onResetCounter: { viewModel.resetCounterToZero() }
-        )
+        VStack(alignment: .leading, spacing: 14)
         {
-            VStack(alignment: .leading, spacing: 14)
+            AirplayServiceView(
+                viewModel: viewModel.airplayServiceViewModel
+            )
+
+            HStack(spacing: 10)
             {
-                AirplayServiceView(
-                    viewModel: viewModel.airplayServiceViewModel
-                )
+               
 
-                HStack(spacing: 10)
+               
+
+                Button(viewModel.isRunning ? "STOP" : "START")
                 {
-                    Circle()
-                        .fill(viewModel.isRunning ? .green : .gray)
-                        .frame(width: 10, height: 10)
-                    Text(viewModel.isRunning ? "Streaming" : "Stopped")
-
-                    Spacer(minLength: 0)
-
-                    Button
-                    {
-                        withAnimation(.easeInOut(duration: 0.18))
-                        {
-                            showsOptions.toggle()
-                        }
-                    } label: {
-                        Label(showsOptions ? "Hide Options" : "Options", systemImage: "slider.horizontal.3")
-                            .labelStyle(.titleAndIcon)
-                    }
-                    .buttonStyle(.bordered)
+                    viewModel.toggleStreaming()
                 }
-                if showsOptions
+                .buttonStyle(.borderedProminent)
+
+                AirPlayRoutePicker().frame(width: 72, height: 72)
+
+                Button(viewModel.isShowingCompare ? "HIDE COMPARE" : "COMPARE")
                 {
-                    StreamOptionsView(
-                        canChangeOutputResolution: viewModel.canChangeOutputResolution,
-                        minimumBufferSecondsValue: viewModel.minimumBufferSeconds,
-                        latencyMode: latencyMode,
-                        resolution: resolution,
-                        frameRate: frameRate,
-                        minimumBufferSeconds: minimumBufferSeconds,
-                        waitsToMinimizeStalling: waitsToMinimizeStalling
+                    viewModel.setComparePresented(!viewModel.isShowingCompare)
+                }
+                .buttonStyle(.bordered)
+                /*if viewModel.isReady
+                {
+
+                    
+                }*/
+                
+                Button
+                {
+                    showsOptions.toggle()
+
+                } label: {
+                    Label(showsOptions ? "Hide Options" : "Options", systemImage: "slider.horizontal.3")
+                        .labelStyle(.titleAndIcon)
+                }
+                .buttonStyle(.bordered)
+                
+            }
+            if showsOptions
+            {
+                StreamOptionsView(
+                    canChangeOutputResolution: viewModel.canChangeOutputResolution,
+                    minimumBufferSecondsValue: viewModel.minimumBufferSeconds,
+                    latencyMode: latencyMode,
+                    resolution: resolution,
+                    frameRate: frameRate,
+                    minimumBufferSeconds: minimumBufferSeconds,
+                    waitsToMinimizeStalling: waitsToMinimizeStalling
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+            Divider()
+            HStack(spacing: 6)
+            {
+                Circle()
+                    .fill(viewModel.isRunning ? .green : .gray)
+                    .frame(width: 10, height: 10)
+                Text(viewModel.isRunning ? "Streaming" : "Stopped")
+                
+                Spacer(minLength: 0)
+                
+                Text("Frames sent: \(viewModel.frameCount)").monospacedDigit()
+                
+                Text(viewModel.isReady ? "Playlist ready (segments buffered)" : "Waiting for initial segments...")
+                    .foregroundStyle(viewModel.isReady ? .green : .secondary)
+            }
+           
+
+            if viewModel.isReady
+            {
+                if viewModel.isShowingCompare
+                {
+                    AirplayCompareSheetView(
+                        pixelBuffer: viewModel.comparePixelBuffer,
+                        frameCount: viewModel.frameCount,
+                        onResetCounter: { viewModel.resetCounterToZero() }
                     )
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
-
-                HStack
-                {
-                    Spacer(minLength: 0)
-
-                    Button(viewModel.isRunning ? "STOP" : "START")
-                    {
-                        viewModel.toggleStreaming()
-                    }
-
-                    Spacer(minLength: 0)
-                }
-
-                Text("Frames sent: \(viewModel.frameCount)").monospacedDigit()
-
-                Text(viewModel.isReady ? "Playlist ready (segments buffered)" : "Waiting for initial segments...")
-                    .foregroundStyle(viewModel.isReady ? .green : .secondary)
-
-                if viewModel.isReady
-                {
-                    HStack
-                    {
-                        Spacer(minLength: 0)
-                        AirPlayRoutePicker().frame(width: 72, height: 72)
-                        Button("COMPARE")
-                        {
-                            viewModel.setComparePresented(true)
-                        }
-                        .buttonStyle(.bordered)
-                        Spacer(minLength: 0)
-                    }
-                }
-
-                Spacer(minLength: 0)
-
             }
-            .padding()
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            Spacer(minLength: 0)
         }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     

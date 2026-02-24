@@ -46,9 +46,13 @@ final class AirplayServiceViewModel
 
     func handlePlaylistReadyChanged(_ isReady: Bool)
     {
-        guard isReady else { return }
-        if player != nil { return }
-        startAirPlayPlayback()
+        guard isReady else
+        {
+            player?.pause()
+            return
+        }
+
+        startOrReloadAirPlayPlayback()
     }
 
     func setAutomaticallyWaitsToMinimizeStalling(_ isEnabled: Bool)
@@ -94,7 +98,7 @@ final class AirplayServiceViewModel
         self.fps = fps
     }
 
-    private func startAirPlayPlayback()
+    private func startOrReloadAirPlayPlayback()
     {
 #if os(iOS)
         do
@@ -111,6 +115,13 @@ final class AirplayServiceViewModel
         guard let url = URL(string: airplayService.airPlayPlaylistURLString)
         else
         {
+            return
+        }
+
+        if let player
+        {
+            player.replaceCurrentItem(with: AVPlayerItem(url: url))
+            player.play()
             return
         }
 

@@ -17,6 +17,7 @@ final class HLSServer
     private var sequence: Int = -1
 
     public var segmentDurationSeconds: Double = 1.0
+    public var sessionToken: String = UUID().uuidString
     private(set) var isRunning = false
     private var isConfigured = false
 
@@ -63,18 +64,19 @@ final class HLSServer
     var m3u8: String
     {
         let durationStr = String(format: "%1.5f", segmentDurationSeconds)
+        let query = "?sid=\(sessionToken)"
         return """
         #EXTM3U
         #EXT-X-TARGETDURATION:\(Int(ceil(segmentDurationSeconds)))
         #EXT-X-VERSION:9
         #EXT-X-MEDIA-SEQUENCE:\(sequence - 2)
-        #EXT-X-MAP:URI="init.mp4"
+        #EXT-X-MAP:URI="init.mp4\(query)"
         #EXTINF:\(durationStr),
-        files/sequence\(sequence - 2).m4s
+        files/sequence\(sequence - 2).m4s\(query)
         #EXTINF:\(durationStr),
-        files/sequence\(sequence - 1).m4s
+        files/sequence\(sequence - 1).m4s\(query)
         #EXTINF:\(durationStr),
-        files/sequence\(sequence).m4s
+        files/sequence\(sequence).m4s\(query)
         """
     }
 
