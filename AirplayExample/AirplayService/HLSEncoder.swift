@@ -1,22 +1,5 @@
-//
-//  HLSEncoder.swift
-//  Swifter
-//
-//  Created by jason van cleave on 2/24/26.
-//
-
-
-//
-//  HLSEncoder.swift
-//  JVCDataMosh
-//
-//  Created by jason van cleave on 5/1/25.
-//
-
 import AVFoundation
 import CoreVideo
-
-import AVFoundation
 
 class HLSEncoder: NSObject, AVAssetWriterDelegate
 {

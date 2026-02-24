@@ -1,5 +1,6 @@
 import CoreImage
 import CoreImage.CIFilterBuiltins
+import CoreGraphics
 import CoreVideo
 import Foundation
 
@@ -13,6 +14,12 @@ final class CounterFrameRenderer
     {
         let image = makeCounterImage(counter: counter, fps: fps, size: size)
         ciContext.render(image, to: pixelBuffer, bounds: image.extent, colorSpace: colorSpace)
+    }
+
+    func makePreviewImage(from pixelBuffer: CVPixelBuffer) -> CGImage?
+    {
+        let image = CIImage(cvPixelBuffer: pixelBuffer)
+        return ciContext.createCGImage(image, from: image.extent)
     }
 
     private func makeCounterImage(counter: Int, fps: Double, size: CGSize) -> CIImage

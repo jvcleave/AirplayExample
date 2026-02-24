@@ -10,7 +10,7 @@ import Foundation
 
 final class HLSServer
 {
-    private let airplayServer = HttpServer()
+    private let httpServer = HttpServer()
 
     public var sequences: [(sequence: Int, data: Data)] = []
     private var initData: Data?
@@ -25,7 +25,7 @@ final class HLSServer
         guard !isConfigured else { return }
         isConfigured = true
 
-        airplayServer["/hls.m3u8"] = { [weak self] _ in
+        httpServer["/hls.m3u8"] = { [weak self] _ in
             guard let self,
                   self.sequence >= 5,
                   let m3u8Data = self.m3u8.data(using: .utf8)
@@ -36,7 +36,7 @@ final class HLSServer
             return .ok(data: m3u8Data, contentType: "application/x-mpegURL")
         }
 
-        airplayServer["/init.mp4"] = { [weak self] _ in
+        httpServer["/init.mp4"] = { [weak self] _ in
             guard let self, let initData = self.initData
             else
             {
@@ -45,7 +45,7 @@ final class HLSServer
             return .ok(data: initData, contentType: "video/mp4")
         }
 
-        airplayServer["/files/:path"] = { [weak self] path in
+        httpServer["/files/:path"] = { [weak self] path in
             guard let self else { return .notFound }
 
             guard let data = self.sequences.first(where: {
@@ -108,7 +108,7 @@ final class HLSServer
         configureRoutesIfNeeded()
         do
         {
-            try airplayServer.start(port, priority: .default)
+            try httpServer.start(port, priority: .default)
             isRunning = true
             print("✅ HLS Server started on port \(port)")
         }

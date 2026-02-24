@@ -8,6 +8,7 @@
 
 /* Begin PBXFileReference section */
 		03030B7A2F4D7CA300929850 /* AirplayExample.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AirplayExample.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		03030BBE2F4DAA7D00929850 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -32,6 +33,7 @@
 		03030B712F4D7CA300929850 = {
 			isa = PBXGroup;
 			children = (
+				03030BBE2F4DAA7D00929850 /* README.md */,
 				03030B7C2F4D7CA300929850 /* AirplayExample */,
 				03030B7B2F4D7CA300929850 /* Products */,
 			);
