@@ -13,47 +13,6 @@ import CoreVideo
 @Observable
 final class ContentViewModel
 {
-    enum LatencyMode: String, CaseIterable, Identifiable
-    {
-        case normal = "Normal"
-        case low = "Low"
-
-        var id: String { rawValue }
-
-        var segmentDurationSeconds: Double
-        {
-            switch self
-            {
-            case .normal:
-                return 1.0
-            case .low:
-                return 0.25
-            }
-        }
-
-        var startupBufferSeconds: Double
-        {
-            switch self
-            {
-            case .normal:
-                return 4.0
-            case .low:
-                return 1.0
-            }
-        }
-
-        var automaticallyWaitsToMinimizeStalling: Bool
-        {
-            switch self
-            {
-            case .normal:
-                return true
-            case .low:
-                return false
-            }
-        }
-    }
-
     enum FrameRate: String, CaseIterable, Identifiable
     {
         case fps30 = "30 fps"
@@ -92,7 +51,6 @@ final class ContentViewModel
         }
     }
 
-    private(set) var latencyMode: LatencyMode = .normal
     private(set) var isShowingCompare = false
     private(set) var comparePixelBuffer: CVPixelBuffer?
     private(set) var frameCount = 0
@@ -131,15 +89,16 @@ final class ContentViewModel
     {
         let initialResolution = OutputResolution.p720
         let initialFrameRate = FrameRate.fps30
-        let initialLatencyMode = LatencyMode.normal
-        let initialMinimumBufferSeconds = initialLatencyMode.startupBufferSeconds
+        let initialSegmentDurationSeconds = 0.25
+        let initialMinimumBufferSeconds = 1.0
+        let initialAutomaticallyWaitsToMinimizeStalling = false
         let airplayServiceViewModel = AirplayServiceViewModel(
-            automaticallyWaitsToMinimizeStalling: initialLatencyMode.automaticallyWaitsToMinimizeStalling,
+            automaticallyWaitsToMinimizeStalling: initialAutomaticallyWaitsToMinimizeStalling,
             outputSize: initialResolution.size,
             fps: initialFrameRate.value
         )
         airplayServiceViewModel.setMinimumBufferSeconds(initialMinimumBufferSeconds)
-        airplayServiceViewModel.setSegmentDurationSeconds(initialLatencyMode.segmentDurationSeconds)
+        airplayServiceViewModel.setSegmentDurationSeconds(initialSegmentDurationSeconds)
         let airplayService = airplayServiceViewModel.airplayService
         let engine = CounterBroadcastEngine(
             initialOutputSize: initialResolution.size,
@@ -147,7 +106,6 @@ final class ContentViewModel
         )
         self.engine = engine
         self.airplayServiceViewModel = airplayServiceViewModel
-        self.latencyMode = initialLatencyMode
 
         engine.onStreamResetRequested = { [weak airplayService] in
             airplayService?.resetStream()
@@ -234,18 +192,6 @@ final class ContentViewModel
         engine.setMinimumBufferSeconds(clampedSeconds)
     }
 
-    func setLatencyMode(_ mode: LatencyMode)
-    {
-        guard !isRunning else { return }
-        guard latencyMode != mode else { return }
-
-        latencyMode = mode
-        airplayServiceViewModel.setSegmentDurationSeconds(mode.segmentDurationSeconds)
-        engine.setSegmentDurationSeconds(mode.segmentDurationSeconds)
-        setMinimumBufferSeconds(mode.startupBufferSeconds)
-        setAutomaticallyWaitsToMinimizeStalling(mode.automaticallyWaitsToMinimizeStalling)
-    }
-
     func setAutomaticallyWaitsToMinimizeStalling(_ isEnabled: Bool)
     {
         guard airplayServiceViewModel.automaticallyWaitsToMinimizeStalling != isEnabled else { return }
@@ -290,14 +236,6 @@ struct ContentView: View
         )
     }
     
-    private var latencyMode: Binding<ContentViewModel.LatencyMode>
-    {
-        Binding(
-            get: { viewModel.latencyMode },
-            set: { viewModel.setLatencyMode($0) }
-        )
-    }
-    
     private var frameRate: Binding<ContentViewModel.FrameRate>
     {
         Binding(
@@ -329,7 +267,6 @@ struct ContentView: View
             AirplayServiceView(
                 viewModel: viewModel.airplayServiceViewModel
             )
-
             HStack(spacing: 10)
             {
                
@@ -366,12 +303,12 @@ struct ContentView: View
                 .buttonStyle(.bordered)
                 
             }
+            .frame(maxWidth: .infinity, alignment: .center)
             if showsOptions
             {
                 StreamOptionsView(
                     canChangeOutputResolution: viewModel.canChangeOutputResolution,
                     minimumBufferSecondsValue: viewModel.minimumBufferSeconds,
-                    latencyMode: latencyMode,
                     resolution: resolution,
                     frameRate: frameRate,
                     minimumBufferSeconds: minimumBufferSeconds,
@@ -380,20 +317,18 @@ struct ContentView: View
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
             Divider()
-            HStack(spacing: 6)
+            VStack
             {
-                Circle()
-                    .fill(viewModel.isRunning ? .green : .gray)
-                    .frame(width: 10, height: 10)
-                Text(viewModel.isRunning ? "Streaming" : "Stopped")
-                
-                Spacer(minLength: 0)
-                
-                Text("Frames sent: \(viewModel.frameCount)").monospacedDigit()
-                
-                Text(viewModel.isReady ? "Playlist ready (segments buffered)" : "Waiting for initial segments...")
-                    .foregroundStyle(viewModel.isReady ? .green : .secondary)
+                Text(viewModel.isRunning ? "Server Status: Streaming" : "Server Status: Stopped")
+                HStack(spacing: 6)
+                {
+                    Text("Frames sent: \(viewModel.frameCount)").monospacedDigit()
+                    
+                    Text(viewModel.isReady ? "Playlist ready (segments buffered)" : "Waiting for initial segments...")
+                        .foregroundStyle(viewModel.isReady ? .green : .secondary)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .center)
            
 
             if viewModel.isReady
@@ -423,7 +358,6 @@ private struct StreamOptionsView: View
     let canChangeOutputResolution: Bool
     let minimumBufferSecondsValue: Double
 
-    @Binding var latencyMode: ContentViewModel.LatencyMode
     @Binding var resolution: ContentViewModel.OutputResolution
     @Binding var frameRate: ContentViewModel.FrameRate
     @Binding var minimumBufferSeconds: Double
@@ -433,16 +367,6 @@ private struct StreamOptionsView: View
     {
         VStack(alignment: .leading, spacing: 10)
         {
-            Picker("Latency Mode", selection: $latencyMode)
-            {
-                ForEach(ContentViewModel.LatencyMode.allCases)
-                { mode in
-                    Text(mode.rawValue).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .disabled(!canChangeOutputResolution)
-
             Picker("Resolution", selection: $resolution)
             {
                 ForEach(ContentViewModel.OutputResolution.allCases)

@@ -49,6 +49,7 @@ final class AirplayServiceViewModel
         guard isReady else
         {
             player?.pause()
+            player?.replaceCurrentItem(with: nil)
             return
         }
 
@@ -66,6 +67,20 @@ final class AirplayServiceViewModel
     {
         guard self.isRunning != isRunning else { return }
         self.isRunning = isRunning
+
+        guard let player else { return }
+
+        if isRunning
+        {
+            if isReady
+            {
+                player.play()
+            }
+        }
+        else
+        {
+            player.pause()
+        }
     }
 
     func setReady(_ isReady: Bool)
@@ -120,6 +135,11 @@ final class AirplayServiceViewModel
 
         if let player
         {
+            player.allowsExternalPlayback = true
+            player.automaticallyWaitsToMinimizeStalling = automaticallyWaitsToMinimizeStalling
+#if os(iOS) || os(tvOS)
+            player.usesExternalPlaybackWhileExternalScreenIsActive = true
+#endif
             player.replaceCurrentItem(with: AVPlayerItem(url: url))
             player.play()
             return

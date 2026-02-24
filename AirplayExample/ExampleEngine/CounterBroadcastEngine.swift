@@ -73,15 +73,6 @@ final class CounterBroadcastEngine
             guard self.isRunning else { return }
             self.isRunning = false
             self.onRunningChanged?(false)
-
-            if self.isReady
-            {
-                self.isReady = false
-                self.onReadyChanged?(false)
-            }
-
-            // Treat the next start as a fresh stream so readiness is re-earned.
-            self.needsReconfigure = self.hasStarted
         }
     }
 

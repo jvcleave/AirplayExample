@@ -15,10 +15,8 @@ struct CompareFrameView: View
 
     var body: some View
     {
-        VStack(alignment: .leading, spacing: 12)
+        VStack(spacing: 12)
         {
-            Text("Source Pixel Buffer")
-                .font(.headline)
 
             Group
             {
