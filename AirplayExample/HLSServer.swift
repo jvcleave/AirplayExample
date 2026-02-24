@@ -11,9 +11,7 @@ import Foundation
 final class HLSServer
 {
     private let airplayServer = AirplayHttpServer()
-    private let doWebserver: Bool
-    
-    
+
     public var sequences: [(sequence: Int, data: Data)] = []
     private var initData: Data?
     private var sequence: Int = -1
@@ -22,38 +20,10 @@ final class HLSServer
     private(set) var isRunning = false
     private var isConfigured = false
 
-    init(doWebserver: Bool = true)
-    {
-        self.doWebserver = doWebserver
-    }
-
     private func configureRoutesIfNeeded()
     {
         guard !isConfigured else { return }
         isConfigured = true
-
-        if doWebserver
-        {
-            airplayServer["/hello"] = { _ in
-                let body = """
-                <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-                <head><title>VideoCreator</title></head>
-                <video id="video" width="240" height="360" autoplay muted></video>
-                <script>
-                  var video = document.getElementById('video');
-                  var videoSrc = 'hls.m3u8';
-                  if (Hls.isSupported()) {
-                    var hls = new Hls();
-                    hls.loadSource(videoSrc);
-                    hls.attachMedia(video);
-                  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                    video.src = videoSrc;
-                  }
-                </script>
-                """
-                return .ok(.htmlBody(body))
-            }
-        }
 
         airplayServer["/hls.m3u8"] = { [weak self] _ in
             guard let self,
@@ -61,7 +31,7 @@ final class HLSServer
                   let m3u8Data = self.m3u8.data(using: .utf8)
             else
             {
-                return .notFound()
+                return .notFound
             }
             return .ok(.data(m3u8Data, contentType: "application/x-mpegURL"))
         }
@@ -70,20 +40,20 @@ final class HLSServer
             guard let self, let initData = self.initData
             else
             {
-                return .notFound()
+                return .notFound
             }
             return .ok(.data(initData, contentType: "video/mp4"))
         }
 
         airplayServer["/files/:path"] = { [weak self] request in
-            guard let self else { return .notFound() }
+            guard let self else { return .notFound }
 
             guard let data = self.sequences.first(where: {
                 request.path.hasPrefix("/files/sequence\($0.sequence)")
             })?.data
             else
             {
-                return .notFound()
+                return .notFound
             }
 
             return .ok(.data(data, contentType: "video/iso.segment"))
@@ -131,7 +101,7 @@ final class HLSServer
         configureRoutesIfNeeded()
         do
         {
-            try airplayServer.start(port, forceIPv4: true, priority: .default)
+            try airplayServer.start(port, priority: .default)
             isRunning = true
             print("✅ HLS Server started on port \(port)")
         }

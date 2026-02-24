@@ -12,9 +12,8 @@ final class CounterBroadcastService: ObservableObject
 
     let port: UInt16 = 8080
 
-    private let doWebserver: Bool
     private let encoder = HLSEncoder()
-    private let server: HLSServer
+    private let server = HLSServer()
     private let workQueue = DispatchQueue(label: "CounterBroadcastService.queue")
     private var timer: DispatchSourceTimer?
     private var pixelBuffer: CVPixelBuffer?
@@ -27,14 +26,7 @@ final class CounterBroadcastService: ObservableObject
     private var counter = 0
     private var hasStarted = false
 
-    init(doWebserver: Bool = false)
-    {
-        self.doWebserver = doWebserver
-        self.server = HLSServer(doWebserver: doWebserver)
-    }
-
     var playlistURLString: String { "http://127.0.0.1:\(port)/hls.m3u8" }
-    var browserTestURLString: String? { doWebserver ? "http://127.0.0.1:\(port)/hello" : nil }
     var localIPAddress: String? { LocalNetworkAddress.preferredIPv4() }
     var airPlayPlaylistURLString: String
     {

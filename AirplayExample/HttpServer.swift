@@ -9,8 +9,8 @@ final class AirplayHttpServer {
         set { server[path] = newValue }
     }
 
-    func start(_ port: in_port_t = 8080, forceIPv4: Bool = false, priority: DispatchQoS.QoSClass = .background) throws {
-        try server.start(port, forceIPv4: forceIPv4, priority: priority)
+    func start(_ port: in_port_t = 8080, priority: DispatchQoS.QoSClass = .background) throws {
+        try server.start(port, priority: priority)
     }
 
     func stop() {
@@ -27,27 +27,19 @@ enum Errno {
 public final class HttpRequest {
     public var path: String = ""
     public var method: String = ""
-    public var headers: [String: String] = [:]
 
     public init() {}
 }
 
 public protocol HttpResponseBodyWriter {
-    func write(_ data: [UInt8]) throws
-    func write(_ data: ArraySlice<UInt8>) throws
     func write(_ data: Data) throws
 }
 
 public enum HttpResponseBody {
-    case htmlBody(String)
     case data(Data, contentType: String? = nil)
 
     func content() -> (Int, ((HttpResponseBodyWriter) throws -> Void)?) {
         switch self {
-        case .htmlBody(let body):
-            let serialized = "<html><meta charset=\"UTF-8\"><body>\(body)</body></html>"
-            let data = [UInt8](serialized.utf8)
-            return (data.count, { try $0.write(data) })
         case .data(let data, _):
             return (data.count, { try $0.write(data) })
         }
@@ -56,7 +48,7 @@ public enum HttpResponseBody {
 
 public enum HttpResponse {
     case ok(HttpResponseBody, [String: String] = [:])
-    case notFound(HttpResponseBody? = nil)
+    case notFound
 
     public var statusCode: Int {
         switch self {
@@ -80,8 +72,6 @@ public enum HttpResponse {
                 headers[key] = value
             }
             switch body {
-            case .htmlBody:
-                headers["Content-Type"] = "text/html"
             case .data(_, let contentType):
                 headers["Content-Type"] = contentType
             }
@@ -95,8 +85,8 @@ public enum HttpResponse {
         switch self {
         case .ok(let body, _):
             return body.content()
-        case .notFound(let body):
-            return body?.content() ?? (-1, nil)
+        case .notFound:
+            return (-1, nil)
         }
     }
 }
@@ -116,27 +106,16 @@ public final class HttpParser {
         let encodedPath = statusLineTokens[1].addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? statusLineTokens[1]
         let urlComponents = URLComponents(string: encodedPath)
         request.path = urlComponents?.path ?? ""
-        request.headers = try readHeaders(socket)
+        try discardHeaders(socket)
         return request
     }
 
-    private func readHeaders(_ socket: Socket) throws -> [String: String] {
-        var headers = [String: String]()
+    private func discardHeaders(_ socket: Socket) throws {
         while case let headerLine = try socket.readLine(), !headerLine.isEmpty {
-            let headerTokens = headerLine.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: true).map(String.init)
-            if let name = headerTokens.first, let value = headerTokens.last {
-                headers[name.lowercased()] = value.trimmingCharacters(in: .whitespaces)
-            }
+            _ = headerLine
         }
-        return headers
     }
 
-    func supportsKeepAlive(_ headers: [String: String]) -> Bool {
-        if let value = headers["connection"] {
-            return value.trimmingCharacters(in: .whitespaces).lowercased() == "keep-alive"
-        }
-        return false
-    }
 }
 
 final class HttpRouter {
@@ -151,30 +130,19 @@ final class HttpRouter {
     private var rootNode = Node()
     private let queue = DispatchQueue(label: "airplay.http.router")
 
-    func register(_ method: String?, path: String, handler: ((HttpRequest) -> HttpResponse)?) {
+    func register(_ method: String, path: String, handler: ((HttpRequest) -> HttpResponse)?) {
         var pathSegments = pathSegments(for: stripQuery(path))
-        pathSegments.insert(method ?? "*", at: 0)
+        pathSegments.insert(method, at: 0)
         var iterator = pathSegments.makeIterator()
         inflate(&rootNode, generator: &iterator).handler = handler
     }
 
     func route(_ method: String?, path: String) -> ((HttpRequest) -> HttpResponse)? {
         queue.sync {
-            if let method {
-                let pathSegments = pathSegments(for: method + "/" + stripQuery(path))
-                var iterator = pathSegments.makeIterator()
-                if let handler = findHandler(&rootNode, generator: &iterator) {
-                    return handler
-                }
-            }
-
-            let pathSegments = pathSegments(for: "*/" + stripQuery(path))
+            guard let method else { return nil }
+            let pathSegments = pathSegments(for: method + "/" + stripQuery(path))
             var iterator = pathSegments.makeIterator()
-            if let handler = findHandler(&rootNode, generator: &iterator) {
-                return handler
-            }
-
-            return nil
+            return findHandler(&rootNode, generator: &iterator)
         }
     }
 
@@ -213,9 +181,6 @@ final class HttpRouter {
                 findHandler(&exactNode, pattern: pattern, matchedNodes: &matchedNodes, index: nextIndex, count: count)
             }
 
-            if var wildcardNode = node.nodes["*"] {
-                findHandler(&wildcardNode, pattern: pattern, matchedNodes: &matchedNodes, index: nextIndex, count: count)
-            }
         }
 
         if node.isEndOfRoute, index == count {
@@ -250,7 +215,7 @@ final class HttpServer {
 
     subscript(path: String) -> ((HttpRequest) -> HttpResponse)? {
         get { nil }
-        set { router.register(nil, path: path, handler: newValue) }
+        set { router.register("GET", path: path, handler: newValue) }
     }
 
     private(set) var state: State {
@@ -262,19 +227,15 @@ final class HttpServer {
         state == .running
     }
 
-    var listenAddressIPv4: String?
-    var listenAddressIPv6: String?
-
     deinit {
         stop()
     }
 
-    func start(_ port: in_port_t = 8080, forceIPv4: Bool = false, priority: DispatchQoS.QoSClass = .background) throws {
+    func start(_ port: in_port_t = 8080, priority: DispatchQoS.QoSClass = .background) throws {
         guard !operating else { return }
         stop()
         state = .starting
-        let address = forceIPv4 ? listenAddressIPv4 : listenAddressIPv6
-        socket = try Socket.tcpSocketForListen(port, forceIPv4, SOMAXCONN, address)
+        socket = try Socket.tcpSocketForListen(port, SOMAXCONN)
         state = .running
 
         DispatchQueue.global(qos: priority).async { [weak self] in
@@ -308,45 +269,40 @@ final class HttpServer {
         if let handler = router.route(request.method, path: request.path) {
             return handler
         }
-        return { _ in .notFound() }
+        return { _ in .notFound }
     }
 
     private func handleConnection(_ socket: Socket) {
         let parser = HttpParser()
-        while operating, let request = try? parser.readHttpRequest(socket) {
-            let handler = dispatch(request)
-            let response = handler(request)
-            var keepConnection = parser.supportsKeepAlive(request.headers)
-            do {
-                if operating {
-                    keepConnection = try respond(socket, response: response, keepAlive: keepConnection)
-                }
-            } catch {
-                print("Failed to send response: \(error)")
-            }
-            if !keepConnection { break }
+        guard operating, let request = try? parser.readHttpRequest(socket) else {
+            socket.close()
+            return
         }
+
+        let handler = dispatch(request)
+        let response = handler(request)
+
+        do {
+            if operating {
+                try respond(socket, response: response)
+            }
+        } catch {
+            print("Failed to send response: \(error)")
+        }
+
         socket.close()
     }
 
     private struct InnerWriteContext: HttpResponseBodyWriter {
         let socket: Socket
 
-        func write(_ data: [UInt8]) throws {
-            try write(ArraySlice(data))
-        }
-
-        func write(_ data: ArraySlice<UInt8>) throws {
-            try socket.writeUInt8(data)
-        }
-
         func write(_ data: Data) throws {
             try socket.writeData(data)
         }
     }
 
-    private func respond(_ socket: Socket, response: HttpResponse, keepAlive: Bool) throws -> Bool {
-        guard operating else { return false }
+    private func respond(_ socket: Socket, response: HttpResponse) throws {
+        guard operating else { return }
 
         var responseHeader = ""
         responseHeader.append("HTTP/1.1 \(response.statusCode) \(response.reasonPhrase)\r\n")
@@ -354,10 +310,6 @@ final class HttpServer {
         let content = response.content()
         if content.length >= 0 {
             responseHeader.append("Content-Length: \(content.length)\r\n")
-        }
-
-        if keepAlive && content.length != -1 {
-            responseHeader.append("Connection: keep-alive\r\n")
         }
 
         for (name, value) in response.headers() {
@@ -370,8 +322,6 @@ final class HttpServer {
         if let writer = content.write {
             try writer(InnerWriteContext(socket: socket))
         }
-
-        return keepAlive && content.length != -1
     }
 }
 
@@ -405,10 +355,6 @@ final class Socket {
 
     func writeUTF8(_ string: String) throws {
         try writeUInt8(ArraySlice(string.utf8))
-    }
-
-    func writeUInt8(_ data: [UInt8]) throws {
-        try writeUInt8(ArraySlice(data))
     }
 
     func writeUInt8(_ data: ArraySlice<UInt8>) throws {
@@ -470,8 +416,8 @@ final class Socket {
         _ = Darwin.close(socket)
     }
 
-    class func tcpSocketForListen(_ port: in_port_t, _ forceIPv4: Bool = false, _ maxPendingConnection: Int32 = SOMAXCONN, _ listenAddress: String? = nil) throws -> Socket {
-        let socketFileDescriptor = socket(forceIPv4 ? AF_INET : AF_INET6, SOCK_STREAM, 0)
+    class func tcpSocketForListen(_ port: in_port_t, _ maxPendingConnection: Int32 = SOMAXCONN) throws -> Socket {
+        let socketFileDescriptor = socket(AF_INET, SOCK_STREAM, 0)
 
         if socketFileDescriptor == -1 {
             throw SocketError.socketCreationFailed(Errno.description())
@@ -485,23 +431,9 @@ final class Socket {
         }
         Socket.setNoSigPipe(socketFileDescriptor)
 
-        var bindResult: Int32 = -1
-        if forceIPv4 {
-            var addr = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.stride), sin_family: UInt8(AF_INET), sin_port: port.bigEndian, sin_addr: in_addr(s_addr: in_addr_t(0)), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
-            if let address = listenAddress {
-                _ = address.withCString { inet_pton(AF_INET, $0, &addr.sin_addr) }
-            }
-            bindResult = withUnsafePointer(to: &addr) {
-                bind(socketFileDescriptor, UnsafePointer<sockaddr>(OpaquePointer($0)), socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        } else {
-            var addr = sockaddr_in6(sin6_len: UInt8(MemoryLayout<sockaddr_in6>.stride), sin6_family: UInt8(AF_INET6), sin6_port: port.bigEndian, sin6_flowinfo: 0, sin6_addr: in6addr_any, sin6_scope_id: 0)
-            if let address = listenAddress {
-                _ = address.withCString { inet_pton(AF_INET6, $0, &addr.sin6_addr) }
-            }
-            bindResult = withUnsafePointer(to: &addr) {
-                bind(socketFileDescriptor, UnsafePointer<sockaddr>(OpaquePointer($0)), socklen_t(MemoryLayout<sockaddr_in6>.size))
-            }
+        var addr = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.stride), sin_family: UInt8(AF_INET), sin_port: port.bigEndian, sin_addr: in_addr(s_addr: in_addr_t(0)), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
+        let bindResult = withUnsafePointer(to: &addr) {
+            bind(socketFileDescriptor, UnsafePointer<sockaddr>(OpaquePointer($0)), socklen_t(MemoryLayout<sockaddr_in>.size))
         }
 
         if bindResult == -1 {

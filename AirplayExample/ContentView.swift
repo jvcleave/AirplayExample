@@ -11,7 +11,7 @@ import AVFoundation
 
 struct ContentView: View
 {
-    @StateObject private var broadcaster = CounterBroadcastService(doWebserver: false)
+    @StateObject private var broadcaster = CounterBroadcastService()
     @State private var player: AVPlayer?
 
     var body: some View
@@ -66,12 +66,6 @@ struct ContentView: View
 
             Divider()
 
-            if let browserTestURLString = broadcaster.browserTestURLString
-            {
-                Text("Open in browser (same device):")
-                    .font(.headline)
-                Link(browserTestURLString, destination: URL(string: browserTestURLString)!)
-            }
             Link(broadcaster.playlistURLString, destination: URL(string: broadcaster.playlistURLString)!)
             Link(broadcaster.airPlayPlaylistURLString, destination: URL(string: broadcaster.airPlayPlaylistURLString)!)
 
