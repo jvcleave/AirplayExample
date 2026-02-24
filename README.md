@@ -2,6 +2,9 @@
 
 Self-contained iOS/macOS example for generating frames, encoding them to HLS, serving them locally over HTTP, and sending playback to AirPlay via `AVPlayer`.
 
+<img width="744" height="1133" alt="image" src="https://github.com/user-attachments/assets/1665f771-378a-43e0-a311-982e382d2b1a" />
+
+
 ## 1. Using `AirplayService` in another app
 
 `AirplayService` is the transport layer. It owns:
