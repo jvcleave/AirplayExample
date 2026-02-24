@@ -1,53 +1,14 @@
 import Dispatch
 import Foundation
 
-final class AirplayHttpServer {
-    private let server = HttpServer()
-
-    subscript(path: String) -> ((HttpRequest) -> HttpResponse)? {
-        get { server[path] }
-        set { server[path] = newValue }
-    }
-
-    func start(_ port: in_port_t = 8080, priority: DispatchQoS.QoSClass = .background) throws {
-        try server.start(port, priority: priority)
-    }
-
-    func stop() {
-        server.stop()
-    }
-}
-
 enum Errno {
     static func description() -> String {
         String(cString: strerror(errno))
     }
 }
 
-public final class HttpRequest {
-    public var path: String = ""
-    public var method: String = ""
-
-    public init() {}
-}
-
-public protocol HttpResponseBodyWriter {
-    func write(_ data: Data) throws
-}
-
-public enum HttpResponseBody {
-    case data(Data, contentType: String? = nil)
-
-    func content() -> (Int, ((HttpResponseBodyWriter) throws -> Void)?) {
-        switch self {
-        case .data(let data, _):
-            return (data.count, { try $0.write(data) })
-        }
-    }
-}
-
 public enum HttpResponse {
-    case ok(HttpResponseBody, [String: String] = [:])
+    case ok(data: Data, contentType: String? = nil)
     case notFound
 
     public var statusCode: Int {
@@ -65,135 +26,23 @@ public enum HttpResponse {
     }
 
     public func headers() -> [String: String] {
-        var headers = ["Server": "AirplayHttpServer \(HttpServer.VERSION)"]
+        var headers = ["Server": "HttpServer \(HttpServer.VERSION)"]
         switch self {
-        case .ok(let body, let customHeaders):
-            for (key, value) in customHeaders {
-                headers[key] = value
-            }
-            switch body {
-            case .data(_, let contentType):
-                headers["Content-Type"] = contentType
-            }
+        case .ok(_, let contentType):
+            headers["Content-Type"] = contentType
         case .notFound:
             break
         }
         return headers
     }
 
-    func content() -> (length: Int, write: ((HttpResponseBodyWriter) throws -> Void)?) {
+    func content() -> (length: Int, data: Data?) {
         switch self {
-        case .ok(let body, _):
-            return body.content()
+        case .ok(let data, _):
+            return (data.count, data)
         case .notFound:
             return (-1, nil)
         }
-    }
-}
-
-public final class HttpParser {
-    public init() {}
-
-    func readHttpRequest(_ socket: Socket) throws -> HttpRequest {
-        let statusLine = try socket.readLine()
-        let statusLineTokens = statusLine.components(separatedBy: " ")
-        guard statusLineTokens.count >= 3 else {
-            throw NSError(domain: "AirplayHttpServer", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid request line: \(statusLine)"])
-        }
-
-        let request = HttpRequest()
-        request.method = statusLineTokens[0]
-        let encodedPath = statusLineTokens[1].addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? statusLineTokens[1]
-        let urlComponents = URLComponents(string: encodedPath)
-        request.path = urlComponents?.path ?? ""
-        try discardHeaders(socket)
-        return request
-    }
-
-    private func discardHeaders(_ socket: Socket) throws {
-        while case let headerLine = try socket.readLine(), !headerLine.isEmpty {
-            _ = headerLine
-        }
-    }
-
-}
-
-final class HttpRouter {
-    init() {}
-
-    private final class Node {
-        var nodes = [String: Node]()
-        var isEndOfRoute = false
-        var handler: ((HttpRequest) -> HttpResponse)?
-    }
-
-    private var rootNode = Node()
-    private let queue = DispatchQueue(label: "airplay.http.router")
-
-    func register(_ method: String, path: String, handler: ((HttpRequest) -> HttpResponse)?) {
-        var pathSegments = pathSegments(for: stripQuery(path))
-        pathSegments.insert(method, at: 0)
-        var iterator = pathSegments.makeIterator()
-        inflate(&rootNode, generator: &iterator).handler = handler
-    }
-
-    func route(_ method: String?, path: String) -> ((HttpRequest) -> HttpResponse)? {
-        queue.sync {
-            guard let method else { return nil }
-            let pathSegments = pathSegments(for: method + "/" + stripQuery(path))
-            var iterator = pathSegments.makeIterator()
-            return findHandler(&rootNode, generator: &iterator)
-        }
-    }
-
-    private func inflate(_ node: inout Node, generator: inout IndexingIterator<[String]>) -> Node {
-        var currentNode = node
-        while let pathSegment = generator.next() {
-            if let nextNode = currentNode.nodes[pathSegment] {
-                currentNode = nextNode
-            } else {
-                currentNode.nodes[pathSegment] = Node()
-                currentNode = currentNode.nodes[pathSegment]!
-            }
-        }
-        currentNode.isEndOfRoute = true
-        return currentNode
-    }
-
-    private func findHandler(_ node: inout Node, generator: inout IndexingIterator<[String]>) -> ((HttpRequest) -> HttpResponse)? {
-        var matchedRoutes = [Node]()
-        let pattern = generator.map { $0 }
-        findHandler(&node, pattern: pattern, matchedNodes: &matchedRoutes, index: 0, count: pattern.count)
-        return matchedRoutes.first?.handler
-    }
-
-    private func findHandler(_ node: inout Node, pattern: [String], matchedNodes: inout [Node], index: Int, count: Int) {
-        if index < count, let pathToken = pattern[index].removingPercentEncoding {
-            let nextIndex = index + 1
-
-            let variableNodes = node.nodes.filter { $0.key.first == ":" }
-            if let variableNode = variableNodes.first {
-                _ = pathToken // matched path token; params are not needed by this app
-                findHandler(&node.nodes[variableNode.key]!, pattern: pattern, matchedNodes: &matchedNodes, index: nextIndex, count: count)
-            }
-
-            if var exactNode = node.nodes[pathToken] {
-                findHandler(&exactNode, pattern: pattern, matchedNodes: &matchedNodes, index: nextIndex, count: count)
-            }
-
-        }
-
-        if node.isEndOfRoute, index == count {
-            matchedNodes.append(node)
-        }
-    }
-
-    private func stripQuery(_ path: String) -> String {
-        path.components(separatedBy: "?").first ?? path
-    }
-
-    private func pathSegments(for path: String) -> [String] {
-        path.split { $0 == "/" }.map(String.init)
     }
 }
 
@@ -207,15 +56,23 @@ final class HttpServer {
         case stopped
     }
 
-    private let router = HttpRouter()
+    private struct Route {
+        let path: String
+        let segments: [String]
+        let handler: (String) -> HttpResponse
+    }
+
     private var socket = Socket(socketFileDescriptor: -1)
     private var sockets: [Int32: Socket] = [:]
+    private var exactRoutes: [String: (String) -> HttpResponse] = [:]
+    private var parameterRoutes: [Route] = []
     private var stateValue: Int32 = State.stopped.rawValue
-    private let queue = DispatchQueue(label: "airplay.httpserver.clientsockets")
+    private let clientsQueue = DispatchQueue(label: "airplay.httpserver.clientsockets")
+    private let routesQueue = DispatchQueue(label: "airplay.httpserver.routes")
 
-    subscript(path: String) -> ((HttpRequest) -> HttpResponse)? {
+    subscript(path: String) -> ((String) -> HttpResponse)? {
         get { nil }
-        set { router.register("GET", path: path, handler: newValue) }
+        set { registerRoute(path: path, handler: newValue) }
     }
 
     private(set) var state: State {
@@ -243,9 +100,9 @@ final class HttpServer {
             while let clientSocket = try? self.socket.acceptClientSocket() {
                 DispatchQueue.global(qos: priority).async { [weak self] in
                     guard let self, self.operating else { return }
-                    self.queue.async { self.sockets[clientSocket.socketFileDescriptor] = clientSocket }
+                    self.clientsQueue.async { self.sockets[clientSocket.socketFileDescriptor] = clientSocket }
                     self.handleConnection(clientSocket)
-                    self.queue.async { self.sockets.removeValue(forKey: clientSocket.socketFileDescriptor) }
+                    self.clientsQueue.async { self.sockets.removeValue(forKey: clientSocket.socketFileDescriptor) }
                 }
             }
             self.stop()
@@ -258,29 +115,28 @@ final class HttpServer {
         for socket in sockets.values {
             socket.close()
         }
-        queue.sync {
+        clientsQueue.sync {
             sockets.removeAll(keepingCapacity: true)
         }
         socket.close()
         state = .stopped
     }
 
-    private func dispatch(_ request: HttpRequest) -> (HttpRequest) -> HttpResponse {
-        if let handler = router.route(request.method, path: request.path) {
+    private func dispatch(path: String) -> (String) -> HttpResponse {
+        if let handler = routeHandler(path: path) {
             return handler
         }
         return { _ in .notFound }
     }
 
     private func handleConnection(_ socket: Socket) {
-        let parser = HttpParser()
-        guard operating, let request = try? parser.readHttpRequest(socket) else {
+        guard operating, let requestPath = try? readHttpRequestPath(socket) else {
             socket.close()
             return
         }
 
-        let handler = dispatch(request)
-        let response = handler(request)
+        let handler = dispatch(path: requestPath)
+        let response = handler(requestPath)
 
         do {
             if operating {
@@ -291,14 +147,6 @@ final class HttpServer {
         }
 
         socket.close()
-    }
-
-    private struct InnerWriteContext: HttpResponseBodyWriter {
-        let socket: Socket
-
-        func write(_ data: Data) throws {
-            try socket.writeData(data)
-        }
     }
 
     private func respond(_ socket: Socket, response: HttpResponse) throws {
@@ -319,9 +167,86 @@ final class HttpServer {
 
         try socket.writeUTF8(responseHeader)
 
-        if let writer = content.write {
-            try writer(InnerWriteContext(socket: socket))
+        if let data = content.data {
+            try socket.writeData(data)
         }
+    }
+
+    private func readHttpRequestPath(_ socket: Socket) throws -> String {
+        let requestLine = try socket.readLine()
+        guard requestLine.hasPrefix("GET ") else {
+            throw NSError(domain: "HttpServer", code: 2, userInfo: [NSLocalizedDescriptionKey: "Unsupported request line: \(requestLine)"])
+        }
+
+        let tokens = requestLine.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+        guard tokens.count >= 3 else {
+            throw NSError(domain: "HttpServer", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid request line: \(requestLine)"])
+        }
+
+        let rawPath = String(tokens[1])
+        try discardHeaders(socket)
+        return stripQuery(rawPath)
+    }
+
+    private func discardHeaders(_ socket: Socket) throws {
+        while !(try socket.discardLine()) {
+        }
+    }
+
+    private func registerRoute(path: String, handler: ((String) -> HttpResponse)?) {
+        let normalizedPath = stripQuery(path)
+        let segments = pathSegments(for: normalizedPath)
+        let hasParameters = segments.contains { $0.first == ":" }
+
+        routesQueue.sync {
+            exactRoutes.removeValue(forKey: normalizedPath)
+            parameterRoutes.removeAll { $0.path == normalizedPath }
+
+            guard let handler else { return }
+
+            if hasParameters {
+                parameterRoutes.append(Route(path: normalizedPath, segments: segments, handler: handler))
+            } else {
+                exactRoutes[normalizedPath] = handler
+            }
+        }
+    }
+
+    private func routeHandler(path: String) -> ((String) -> HttpResponse)? {
+        routesQueue.sync {
+            let normalizedPath = stripQuery(path)
+            if let handler = exactRoutes[normalizedPath] {
+                return handler
+            }
+
+            let requestSegments = pathSegments(for: normalizedPath)
+            for route in parameterRoutes where route.segments.count == requestSegments.count {
+                if matches(route.segments, requestSegments) {
+                    return route.handler
+                }
+            }
+            return nil
+        }
+    }
+
+    private func matches(_ routeSegments: [String], _ requestSegments: [String]) -> Bool {
+        for (routeSegment, requestSegment) in zip(routeSegments, requestSegments) {
+            if routeSegment.first == ":" {
+                continue
+            }
+            guard routeSegment.removingPercentEncoding == requestSegment.removingPercentEncoding else {
+                return false
+            }
+        }
+        return true
+    }
+
+    private func stripQuery(_ path: String) -> String {
+        String(path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first ?? "")
+    }
+
+    private func pathSegments(for path: String) -> [String] {
+        path.split { $0 == "/" }.map(String.init)
     }
 }
 
@@ -405,6 +330,19 @@ final class Socket {
             }
         } while index != Socket.NL
         return characters
+    }
+
+    // Returns true when the discarded line was empty (CRLF only).
+    func discardLine() throws -> Bool {
+        var sawContent = false
+        var byte: UInt8 = 0
+        repeat {
+            byte = try read()
+            if byte > Socket.CR {
+                sawContent = true
+            }
+        } while byte != Socket.NL
+        return !sawContent
     }
 
     class func setNoSigPipe(_ socket: Int32) {

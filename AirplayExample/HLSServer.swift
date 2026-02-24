@@ -10,7 +10,7 @@ import Foundation
 
 final class HLSServer
 {
-    private let airplayServer = AirplayHttpServer()
+    private let airplayServer = HttpServer()
 
     public var sequences: [(sequence: Int, data: Data)] = []
     private var initData: Data?
@@ -33,7 +33,7 @@ final class HLSServer
             {
                 return .notFound
             }
-            return .ok(.data(m3u8Data, contentType: "application/x-mpegURL"))
+            return .ok(data: m3u8Data, contentType: "application/x-mpegURL")
         }
 
         airplayServer["/init.mp4"] = { [weak self] _ in
@@ -42,21 +42,21 @@ final class HLSServer
             {
                 return .notFound
             }
-            return .ok(.data(initData, contentType: "video/mp4"))
+            return .ok(data: initData, contentType: "video/mp4")
         }
 
-        airplayServer["/files/:path"] = { [weak self] request in
+        airplayServer["/files/:path"] = { [weak self] path in
             guard let self else { return .notFound }
 
             guard let data = self.sequences.first(where: {
-                request.path.hasPrefix("/files/sequence\($0.sequence)")
+                path.hasPrefix("/files/sequence\($0.sequence)")
             })?.data
             else
             {
                 return .notFound
             }
 
-            return .ok(.data(data, contentType: "video/iso.segment"))
+            return .ok(data: data, contentType: "video/iso.segment")
         }
     }
 
@@ -93,6 +93,13 @@ final class HLSServer
         {
             sequences.removeFirst()
         }
+    }
+
+    public func resetStream()
+    {
+        sequences.removeAll(keepingCapacity: true)
+        initData = nil
+        sequence = -1
     }
 
     public func start(port: UInt16 = 8080)

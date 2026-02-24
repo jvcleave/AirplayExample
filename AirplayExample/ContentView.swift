@@ -18,6 +18,26 @@ struct ContentView: View
     {
         VStack(alignment: .leading, spacing: 14)
         {
+            Group
+            {
+                if let player
+                {
+                    VideoPlayer(player: player)
+                }
+                else
+                {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(.quaternary)
+                        .overlay(
+                            Text("Local Preview")
+                                .foregroundStyle(.secondary)
+                        )
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .aspectRatio(16.0 / 9.0, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+
             Text("AirplayApp HLS Counter")
                 .font(.title2.bold())
 
@@ -31,57 +51,64 @@ struct ContentView: View
 
             HStack(spacing: 10)
             {
-                Button("Start Counter Stream")
+                Button(broadcaster.isRunning ? "STOP" : "START")
                 {
-                    broadcaster.start()
+                    if broadcaster.isRunning
+                    {
+                        broadcaster.stop()
+                    }
+                    else
+                    {
+                        broadcaster.start()
+                    }
                 }
-                .disabled(broadcaster.isRunning)
 
-                Button("Pause")
+                Picker("Resolution", selection: resolutionBinding)
                 {
-                    broadcaster.stop()
+                    ForEach(CounterBroadcastService.OutputResolution.allCases)
+                    { resolution in
+                        Text(resolution.rawValue).tag(resolution)
+                    }
                 }
-                .disabled(!broadcaster.isRunning)
+                .pickerStyle(.segmented)
+                .disabled(!broadcaster.canChangeOutputResolution)
             }
 
-            HStack(spacing: 12)
+            #if os(iOS)
+            if broadcaster.isReady
             {
-                Button("Play HLS (AirPlay-capable)")
-                {
-                    startAirPlayPlayback()
-                }
-                .disabled(!broadcaster.isReady)
-
-                #if os(iOS)
                 AirPlayRoutePicker()
                     .frame(width: 44, height: 44)
-                #endif
             }
+            #endif
 
-            Text("Frames sent: \(broadcaster.frameCount)")
-                .monospacedDigit()
+            Text("Frames sent: \(broadcaster.frameCount)").monospacedDigit()
 
             Text(broadcaster.isReady ? "Playlist ready (segments buffered)" : "Waiting for initial segments...")
                 .foregroundStyle(broadcaster.isReady ? .green : .secondary)
 
-            Divider()
-
-            Link(broadcaster.playlistURLString, destination: URL(string: broadcaster.playlistURLString)!)
-            Link(broadcaster.airPlayPlaylistURLString, destination: URL(string: broadcaster.airPlayPlaylistURLString)!)
-
-            Text("Use the LAN URL for AirPlay devices (it uses this iPad's local network IP).")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-
-            if let player
-            {
-                VideoPlayer(player: player)
-                    .frame(height: 180)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-            }
         }
         .padding()
         .frame(minWidth: 520, minHeight: 280)
+        .onChange(of: broadcaster.isReady)
+        { _, isReady in
+            guard isReady else { return }
+            startAirPlayPlaybackIfNeeded()
+        }
+    }
+
+    private var resolutionBinding: Binding<CounterBroadcastService.OutputResolution>
+    {
+        Binding(
+            get: { broadcaster.outputResolution },
+            set: { broadcaster.setOutputResolution($0) }
+        )
+    }
+
+    private func startAirPlayPlaybackIfNeeded()
+    {
+        if player != nil { return }
+        startAirPlayPlayback()
     }
 
     private func startAirPlayPlayback()
