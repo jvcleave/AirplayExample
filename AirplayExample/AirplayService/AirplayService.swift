@@ -8,7 +8,7 @@ import Darwin
 final class AirplayService
 {
     let port: UInt16
-    private(set) var readyBufferSeconds: Double
+    private(set) var minimumBufferSeconds: Double
     private(set) var segmentDurationSeconds: Double
 
     var onPlaylistReady: (() -> Void)?
@@ -17,10 +17,10 @@ final class AirplayService
     private let server = HLSServer()
     private var didSignalReady = false
 
-    init(port: UInt16 = 8080, readyBufferSeconds: Double = 5.0, segmentDurationSeconds: Double = 1.0)
+    init(port: UInt16 = 8080, minimumBufferSeconds: Double = 5.0, segmentDurationSeconds: Double = 1.0)
     {
         self.port = port
-        self.readyBufferSeconds = readyBufferSeconds
+        self.minimumBufferSeconds = minimumBufferSeconds
         self.segmentDurationSeconds = max(0.1, segmentDurationSeconds)
     }
 
@@ -37,6 +37,12 @@ final class AirplayService
         server.start(port: port)
     }
 
+    func startStream(outputSize: CGSize, fps: Double)
+    {
+        configureEncoder(outputSize: outputSize, fps: fps)
+        startServerIfNeeded()
+    }
+
     func resetStream()
     {
         encoder = nil
@@ -44,7 +50,7 @@ final class AirplayService
         didSignalReady = false
     }
 
-    func configureEncoder(outputSize: CGSize, fps: Double)
+    private func configureEncoder(outputSize: CGSize, fps: Double)
     {
         server.segmentDurationSeconds = segmentDurationSeconds
 
@@ -56,7 +62,7 @@ final class AirplayService
             self.server.addSegment(data: data)
 
             let segmentDuration = max(self.server.segmentDurationSeconds, 0.001)
-            let requiredSegments = max(1, Int(ceil(self.readyBufferSeconds / segmentDuration)))
+            let requiredSegments = max(1, Int(ceil(self.minimumBufferSeconds / segmentDuration)))
             guard !self.didSignalReady, self.server.sequences.count >= requiredSegments else { return }
             self.didSignalReady = true
             self.onPlaylistReady?()
@@ -70,9 +76,9 @@ final class AirplayService
         encoder?.addPixelBuffer(pixelBuffer)
     }
 
-    func setReadyBufferSeconds(_ seconds: Double)
+    func setMinimumBufferSeconds(_ seconds: Double)
     {
-        readyBufferSeconds = max(0.25, seconds)
+        minimumBufferSeconds = max(0.25, seconds)
     }
 
     func setSegmentDurationSeconds(_ seconds: Double)

@@ -19,15 +19,14 @@ final class AirplayServiceViewModel
     private(set) var player: AVPlayer?
     private(set) var isRunning = false
     private(set) var isReady = false
-    private(set) var frameCount = 0
-    private(set) var readyBufferSeconds: Double
+    private(set) var minimumBufferSeconds: Double
     private(set) var automaticallyWaitsToMinimizeStalling: Bool
     private(set) var outputSize: CGSize
     private(set) var fps: Double
 
     init(
         port: UInt16 = 8080,
-        readyBufferSeconds: Double = 5.0,
+        minimumBufferSeconds: Double = 5.0,
         segmentDurationSeconds: Double = 1.0,
         automaticallyWaitsToMinimizeStalling: Bool,
         outputSize: CGSize = CGSize(width: 1280, height: 720),
@@ -36,10 +35,10 @@ final class AirplayServiceViewModel
     {
         self.airplayService = AirplayService(
             port: port,
-            readyBufferSeconds: readyBufferSeconds,
+            minimumBufferSeconds: minimumBufferSeconds,
             segmentDurationSeconds: segmentDurationSeconds
         )
-        self.readyBufferSeconds = readyBufferSeconds
+        self.minimumBufferSeconds = minimumBufferSeconds
         self.automaticallyWaitsToMinimizeStalling = automaticallyWaitsToMinimizeStalling
         self.outputSize = outputSize
         self.fps = fps
@@ -71,17 +70,11 @@ final class AirplayServiceViewModel
         self.isReady = isReady
     }
 
-    func setFrameCount(_ frameCount: Int)
+    func setMinimumBufferSeconds(_ seconds: Double)
     {
-        guard self.frameCount != frameCount else { return }
-        self.frameCount = frameCount
-    }
-
-    func setReadyBufferSeconds(_ seconds: Double)
-    {
-        guard readyBufferSeconds != seconds else { return }
-        readyBufferSeconds = seconds
-        airplayService.setReadyBufferSeconds(seconds)
+        guard minimumBufferSeconds != seconds else { return }
+        minimumBufferSeconds = seconds
+        airplayService.setMinimumBufferSeconds(seconds)
     }
 
     func setSegmentDurationSeconds(_ seconds: Double)

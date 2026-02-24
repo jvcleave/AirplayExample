@@ -143,7 +143,7 @@ final class CounterBroadcastEngine
         }
     }
 
-    func setReadyBufferSeconds(_ seconds: Double)
+    func setMinimumBufferSeconds(_ seconds: Double)
     {
         queue.async { [weak self] in
             guard let self else { return }

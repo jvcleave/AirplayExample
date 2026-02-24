@@ -95,11 +95,11 @@ final class ContentViewModel
     private(set) var latencyMode: LatencyMode = .normal
     private(set) var isShowingCompare = false
     private(set) var comparePixelBuffer: CVPixelBuffer?
+    private(set) var frameCount = 0
     
     var isRunning: Bool { airplayServiceViewModel.isRunning }
     var isReady: Bool { airplayServiceViewModel.isReady }
-    var frameCount: Int { airplayServiceViewModel.frameCount }
-    var readyBufferSeconds: Double { airplayServiceViewModel.readyBufferSeconds }
+    var minimumBufferSeconds: Double { airplayServiceViewModel.minimumBufferSeconds }
     var automaticallyWaitsToMinimizeStalling: Bool { airplayServiceViewModel.automaticallyWaitsToMinimizeStalling }
     var canChangeOutputResolution: Bool { !isRunning }
     var outputResolution: OutputResolution
@@ -132,13 +132,13 @@ final class ContentViewModel
         let initialResolution = OutputResolution.p720
         let initialFrameRate = FrameRate.fps30
         let initialLatencyMode = LatencyMode.normal
-        let initialReadyBufferSeconds = initialLatencyMode.startupBufferSeconds
+        let initialMinimumBufferSeconds = initialLatencyMode.startupBufferSeconds
         let airplayServiceViewModel = AirplayServiceViewModel(
             automaticallyWaitsToMinimizeStalling: initialLatencyMode.automaticallyWaitsToMinimizeStalling,
             outputSize: initialResolution.size,
             fps: initialFrameRate.value
         )
-        airplayServiceViewModel.setReadyBufferSeconds(initialReadyBufferSeconds)
+        airplayServiceViewModel.setMinimumBufferSeconds(initialMinimumBufferSeconds)
         airplayServiceViewModel.setSegmentDurationSeconds(initialLatencyMode.segmentDurationSeconds)
         let airplayService = airplayServiceViewModel.airplayService
         let engine = CounterBroadcastEngine(
@@ -154,9 +154,7 @@ final class ContentViewModel
         }
 
         engine.onStreamConfigureRequested = { [weak airplayService] outputSize, fps in
-            guard let airplayService else { return }
-            airplayService.configureEncoder(outputSize: outputSize, fps: fps)
-            airplayService.startServerIfNeeded()
+            airplayService?.startStream(outputSize: outputSize, fps: fps)
         }
 
         engine.onPixelBufferRendered = { [weak airplayService] pixelBuffer in
@@ -183,7 +181,7 @@ final class ContentViewModel
 
         engine.onFrameCountChanged = { [weak self] frameCount in
             Task { @MainActor [weak self] in
-                self?.airplayServiceViewModel.setFrameCount(frameCount)
+                self?.frameCount = frameCount
             }
         }
 
@@ -224,16 +222,16 @@ final class ContentViewModel
         engine.setFPS(frameRate.value)
     }
 
-    func setReadyBufferSeconds(_ seconds: Double)
+    func setMinimumBufferSeconds(_ seconds: Double)
     {
         guard !isRunning else { return }
 
         let steppedSeconds = (seconds / 0.25).rounded() * 0.25
         let clampedSeconds = max(0.25, min(10.0, steppedSeconds))
-        guard airplayServiceViewModel.readyBufferSeconds != clampedSeconds else { return }
+        guard airplayServiceViewModel.minimumBufferSeconds != clampedSeconds else { return }
 
-        airplayServiceViewModel.setReadyBufferSeconds(clampedSeconds)
-        engine.setReadyBufferSeconds(clampedSeconds)
+        airplayServiceViewModel.setMinimumBufferSeconds(clampedSeconds)
+        engine.setMinimumBufferSeconds(clampedSeconds)
     }
 
     func setLatencyMode(_ mode: LatencyMode)
@@ -244,7 +242,7 @@ final class ContentViewModel
         latencyMode = mode
         airplayServiceViewModel.setSegmentDurationSeconds(mode.segmentDurationSeconds)
         engine.setSegmentDurationSeconds(mode.segmentDurationSeconds)
-        setReadyBufferSeconds(mode.startupBufferSeconds)
+        setMinimumBufferSeconds(mode.startupBufferSeconds)
         setAutomaticallyWaitsToMinimizeStalling(mode.automaticallyWaitsToMinimizeStalling)
     }
 
@@ -308,11 +306,11 @@ struct ContentView: View
         )
     }
     
-    private var readyBufferSeconds: Binding<Double>
+    private var minimumBufferSeconds: Binding<Double>
     {
         Binding(
-            get: { viewModel.readyBufferSeconds },
-            set: { viewModel.setReadyBufferSeconds($0) }
+            get: { viewModel.minimumBufferSeconds },
+            set: { viewModel.setMinimumBufferSeconds($0) }
         )
     }
     
@@ -372,11 +370,11 @@ struct ContentView: View
                 {
                     StreamOptionsView(
                         canChangeOutputResolution: viewModel.canChangeOutputResolution,
-                        readyBufferSecondsValue: viewModel.readyBufferSeconds,
+                        minimumBufferSecondsValue: viewModel.minimumBufferSeconds,
                         latencyMode: latencyMode,
                         resolution: resolution,
                         frameRate: frameRate,
-                        readyBufferSeconds: readyBufferSeconds,
+                        minimumBufferSeconds: minimumBufferSeconds,
                         waitsToMinimizeStalling: waitsToMinimizeStalling
                     )
                     .transition(.opacity.combined(with: .move(edge: .top)))
@@ -428,12 +426,12 @@ struct ContentView: View
 private struct StreamOptionsView: View
 {
     let canChangeOutputResolution: Bool
-    let readyBufferSecondsValue: Double
+    let minimumBufferSecondsValue: Double
 
     @Binding var latencyMode: ContentViewModel.LatencyMode
     @Binding var resolution: ContentViewModel.OutputResolution
     @Binding var frameRate: ContentViewModel.FrameRate
-    @Binding var readyBufferSeconds: Double
+    @Binding var minimumBufferSeconds: Double
     @Binding var waitsToMinimizeStalling: Bool
 
     var body: some View
@@ -472,11 +470,11 @@ private struct StreamOptionsView: View
 
             VStack(alignment: .leading, spacing: 6)
             {
-                Text("Startup Buffer: \(readyBufferSecondsValue.formatted(.number.precision(.fractionLength(0...2))))s")
+                Text("Startup Buffer: \(minimumBufferSecondsValue.formatted(.number.precision(.fractionLength(0...2))))s")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                Slider(value: $readyBufferSeconds, in: 0.25...10, step: 0.25)
+                Slider(value: $minimumBufferSeconds, in: 0.25...10, step: 0.25)
                     .disabled(!canChangeOutputResolution)
             }
 
