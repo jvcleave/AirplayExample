@@ -1,6 +1,5 @@
 import CoreImage
 import CoreImage.CIFilterBuiltins
-import CoreGraphics
 import CoreVideo
 import Foundation
 
@@ -16,12 +15,6 @@ final class CounterFrameRenderer
         ciContext.render(image, to: pixelBuffer, bounds: image.extent, colorSpace: colorSpace)
     }
 
-    func makePreviewImage(from pixelBuffer: CVPixelBuffer) -> CGImage?
-    {
-        let image = CIImage(cvPixelBuffer: pixelBuffer)
-        return ciContext.createCGImage(image, from: image.extent)
-    }
-
     private func makeCounterImage(counter: Int, fps: Double, size: CGSize) -> CIImage
     {
         let bounds = CGRect(origin: .zero, size: size)
@@ -34,14 +27,30 @@ final class CounterFrameRenderer
             .cropped(to: bounds)
 
         let grid = makeGrid(size: size)
-        let timeText = makeText("COUNT \(counter)", fontSize: 42, x: 40, y: size.height - 120)
-        let frameText = makeText("FRAME \(counter)  FPS \(Int(fps))", fontSize: 22, x: 42, y: 46)
+        let fpsInt = max(1, Int(fps.rounded()))
+        let timecode = makeTimecodeString(frame: counter, fps: fpsInt)
+        let timecodeText = makeText(timecode, fontSize: 52, x: 40, y: size.height - 130)
+        let infoText = makeText("FRAME \(counter)  FPS \(fpsInt)", fontSize: 22, x: 42, y: 46)
 
-        return [grid, timeText, frameText]
+        return [grid, timecodeText, infoText]
             .compactMap { $0 }
             .reduce(bg) { current, overlay in
                 overlay.composited(over: current)
             }
+    }
+
+    private func makeTimecodeString(frame: Int, fps: Int) -> String
+    {
+        let totalFrames = max(0, frame)
+        let framesPerSecond = max(1, fps)
+        let totalSeconds = totalFrames / framesPerSecond
+
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
+        let frames = totalFrames % framesPerSecond
+
+        return String(format: "%02d:%02d:%02d:%02d", hours, minutes, seconds, frames)
     }
 
     private func makeGrid(size: CGSize) -> CIImage?

@@ -8,16 +8,17 @@ class HLSEncoder: NSObject, AVAssetWriterDelegate
     private var isStarted = false
     var onSegmentData: ((Data) -> Void)?
 
-    func setup(outputSize: CGSize, fps: Double)
+    func setup(outputSize: CGSize, fps: Double, segmentDurationSeconds: Double = 1.0)
     {
-        print("📦 [HLSEncoder] Setting up with size: \(outputSize), fps: \(fps)")
+        let segmentDurationSeconds = max(0.1, segmentDurationSeconds)
+        print("📦 [HLSEncoder] Setting up with size: \(outputSize), fps: \(fps), segment: \(segmentDurationSeconds)s")
 
         do
         {
             assetWriter = AVAssetWriter(contentType: .mpeg4Movie)
             assetWriter.shouldOptimizeForNetworkUse = true
             assetWriter.outputFileTypeProfile = .mpeg4AppleHLS
-            assetWriter.preferredOutputSegmentInterval = CMTime(seconds: 1, preferredTimescale: 1)
+            assetWriter.preferredOutputSegmentInterval = CMTime(seconds: segmentDurationSeconds, preferredTimescale: 600)
             assetWriter.delegate = self
 
             let settings: [String: Any] = [

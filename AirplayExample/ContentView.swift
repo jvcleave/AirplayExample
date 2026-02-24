@@ -6,22 +6,61 @@
 //
 
 import SwiftUI
-import AVKit
-
-import AVFoundation
-import CoreGraphics
 import Observation
+import CoreVideo
 
 @MainActor
 @Observable
 final class ContentViewModel
 {
+    enum LatencyMode: String, CaseIterable, Identifiable
+    {
+        case normal = "Normal"
+        case low = "Low"
+
+        var id: String { rawValue }
+
+        var segmentDurationSeconds: Double
+        {
+            switch self
+            {
+            case .normal:
+                return 1.0
+            case .low:
+                return 0.25
+            }
+        }
+
+        var startupBufferSeconds: Double
+        {
+            switch self
+            {
+            case .normal:
+                return 4.0
+            case .low:
+                return 1.0
+            }
+        }
+
+        var automaticallyWaitsToMinimizeStalling: Bool
+        {
+            switch self
+            {
+            case .normal:
+                return true
+            case .low:
+                return false
+            }
+        }
+    }
+
     enum FrameRate: String, CaseIterable, Identifiable
     {
         case fps30 = "30 fps"
         case fps60 = "60 fps"
 
         var id: String { rawValue }
+
         var value: Double
         {
             switch self
@@ -52,65 +91,105 @@ final class ContentViewModel
             }
         }
     }
-    
-    private(set) var isRunning = false
-    private(set) var isReady = false
-    private(set) var frameCount = 0
-    private(set) var outputResolution: OutputResolution = .p720
-    private(set) var frameRate: FrameRate = .fps30
-    private(set) var readyBufferSeconds = 5.0
-    private(set) var player: AVPlayer?
+
+    private(set) var latencyMode: LatencyMode = .normal
     private(set) var isShowingCompare = false
-    private(set) var compareFrameImage: CGImage?
+    private(set) var comparePixelBuffer: CVPixelBuffer?
     
+    var isRunning: Bool { airplayServiceViewModel.isRunning }
+    var isReady: Bool { airplayServiceViewModel.isReady }
+    var frameCount: Int { airplayServiceViewModel.frameCount }
+    var readyBufferSeconds: Double { airplayServiceViewModel.readyBufferSeconds }
+    var automaticallyWaitsToMinimizeStalling: Bool { airplayServiceViewModel.automaticallyWaitsToMinimizeStalling }
     var canChangeOutputResolution: Bool { !isRunning }
+    var outputResolution: OutputResolution
+    {
+        switch airplayServiceViewModel.outputSize
+        {
+        case OutputResolution.p1080.size:
+            return .p1080
+        default:
+            return .p720
+        }
+    }
+    var frameRate: FrameRate
+    {
+        switch airplayServiceViewModel.fps
+        {
+        case 60:
+            return .fps60
+        default:
+            return .fps30
+        }
+    }
     
     @ObservationIgnored
     private let engine: CounterBroadcastEngine
-    private let airPlayPlaylistURLString: String
+    let airplayServiceViewModel: AirplayServiceViewModel
     
     init()
     {
         let initialResolution = OutputResolution.p720
         let initialFrameRate = FrameRate.fps30
-        let initialReadyBufferSeconds = 5.0
-        let airplayService = AirplayService(readyBufferSeconds: initialReadyBufferSeconds)
+        let initialLatencyMode = LatencyMode.normal
+        let initialReadyBufferSeconds = initialLatencyMode.startupBufferSeconds
+        let airplayServiceViewModel = AirplayServiceViewModel(
+            automaticallyWaitsToMinimizeStalling: initialLatencyMode.automaticallyWaitsToMinimizeStalling,
+            outputSize: initialResolution.size,
+            fps: initialFrameRate.value
+        )
+        airplayServiceViewModel.setReadyBufferSeconds(initialReadyBufferSeconds)
+        airplayServiceViewModel.setSegmentDurationSeconds(initialLatencyMode.segmentDurationSeconds)
+        let airplayService = airplayServiceViewModel.airplayService
         let engine = CounterBroadcastEngine(
             initialOutputSize: initialResolution.size,
-            airplayService: airplayService,
             fps: initialFrameRate.value
         )
         self.engine = engine
-        self.outputResolution = initialResolution
-        self.frameRate = initialFrameRate
-        self.readyBufferSeconds = initialReadyBufferSeconds
-        self.airPlayPlaylistURLString = engine.airPlayPlaylistURLString
+        self.airplayServiceViewModel = airplayServiceViewModel
+        self.latencyMode = initialLatencyMode
+
+        engine.onStreamResetRequested = { [weak airplayService] in
+            airplayService?.resetStream()
+        }
+
+        engine.onStreamConfigureRequested = { [weak airplayService] outputSize, fps in
+            guard let airplayService else { return }
+            airplayService.configureEncoder(outputSize: outputSize, fps: fps)
+            airplayService.startServerIfNeeded()
+        }
+
+        engine.onPixelBufferRendered = { [weak airplayService] pixelBuffer in
+            airplayService?.addPixelBuffer(pixelBuffer)
+        }
+
+        airplayService.onPlaylistReady = { [weak engine] in
+            engine?.handlePlaylistReady()
+        }
+
         engine.onRunningChanged = { [weak self] isRunning in
             Task { @MainActor [weak self] in
-                self?.isRunning = isRunning
+                self?.airplayServiceViewModel.setRunning(isRunning)
             }
         }
 
         engine.onReadyChanged = { [weak self] isReady in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.isReady = isReady
-                if isReady
-                {
-                    self.startAirPlayPlaybackIfNeeded()
-                }
+                self.airplayServiceViewModel.setReady(isReady)
+                self.airplayServiceViewModel.handlePlaylistReadyChanged(isReady)
             }
         }
 
         engine.onFrameCountChanged = { [weak self] frameCount in
             Task { @MainActor [weak self] in
-                self?.frameCount = frameCount
+                self?.airplayServiceViewModel.setFrameCount(frameCount)
             }
         }
 
-        engine.onCompareFrameChanged = { [weak self] image in
-            DispatchQueue.main.async { [weak self] in
-                self?.compareFrameImage = image
+        engine.onComparePixelBufferChanged = { [weak self] pixelBuffer in
+            Task { @MainActor [weak self] in
+                self?.comparePixelBuffer = pixelBuffer
             }
         }
     }
@@ -130,18 +209,18 @@ final class ContentViewModel
     func setOutputResolution(_ resolution: OutputResolution)
     {
         guard !isRunning else { return }
-        guard outputResolution != resolution else { return }
+        guard airplayServiceViewModel.outputSize != resolution.size else { return }
 
-        outputResolution = resolution
+        airplayServiceViewModel.setOutputSize(resolution.size)
         engine.setOutputSize(resolution.size)
     }
 
     func setFrameRate(_ frameRate: FrameRate)
     {
         guard !isRunning else { return }
-        guard self.frameRate != frameRate else { return }
+        guard airplayServiceViewModel.fps != frameRate.value else { return }
 
-        self.frameRate = frameRate
+        airplayServiceViewModel.setFPS(frameRate.value)
         engine.setFPS(frameRate.value)
     }
 
@@ -149,11 +228,35 @@ final class ContentViewModel
     {
         guard !isRunning else { return }
 
-        let clampedSeconds = max(1.0, min(10.0, seconds.rounded()))
-        guard readyBufferSeconds != clampedSeconds else { return }
+        let steppedSeconds = (seconds / 0.25).rounded() * 0.25
+        let clampedSeconds = max(0.25, min(10.0, steppedSeconds))
+        guard airplayServiceViewModel.readyBufferSeconds != clampedSeconds else { return }
 
-        readyBufferSeconds = clampedSeconds
+        airplayServiceViewModel.setReadyBufferSeconds(clampedSeconds)
         engine.setReadyBufferSeconds(clampedSeconds)
+    }
+
+    func setLatencyMode(_ mode: LatencyMode)
+    {
+        guard !isRunning else { return }
+        guard latencyMode != mode else { return }
+
+        latencyMode = mode
+        airplayServiceViewModel.setSegmentDurationSeconds(mode.segmentDurationSeconds)
+        engine.setSegmentDurationSeconds(mode.segmentDurationSeconds)
+        setReadyBufferSeconds(mode.startupBufferSeconds)
+        setAutomaticallyWaitsToMinimizeStalling(mode.automaticallyWaitsToMinimizeStalling)
+    }
+
+    func setAutomaticallyWaitsToMinimizeStalling(_ isEnabled: Bool)
+    {
+        guard airplayServiceViewModel.automaticallyWaitsToMinimizeStalling != isEnabled else { return }
+        airplayServiceViewModel.setAutomaticallyWaitsToMinimizeStalling(isEnabled)
+    }
+
+    func resetCounterToZero()
+    {
+        engine.resetCounterToZero()
     }
 
     func setComparePresented(_ isPresented: Bool)
@@ -172,110 +275,111 @@ final class ContentViewModel
         engine.stop()
     }
     
-    private func startAirPlayPlaybackIfNeeded()
-    {
-        if player != nil { return }
-        startAirPlayPlayback()
-    }
-    
-    private func startAirPlayPlayback()
-    {
-#if os(iOS)
-        do
-        {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [.allowAirPlay])
-            try AVAudioSession.sharedInstance().setActive(true)
-        }
-        catch
-        {
-            print("AVAudioSession setup failed: \(error)")
-        }
-#endif
-        
-        guard let url = URL(string: airPlayPlaylistURLString)
-        else
-        {
-            return
-        }
-        
-        let player = AVPlayer()
-        player.allowsExternalPlayback = true
-#if os(iOS) || os(tvOS)
-        player.usesExternalPlaybackWhileExternalScreenIsActive = true
-#endif
-        player.replaceCurrentItem(with: AVPlayerItem(url: url))
-        self.player = player
-        player.play()
-    }
 }
 
 
 struct ContentView: View
 {
     @State private var viewModel = ContentViewModel()
+    @State private var showsOptions = false
 
+    
+    private var resolution: Binding<ContentViewModel.OutputResolution>
+    {
+        Binding(
+            get: { viewModel.outputResolution },
+            set: { viewModel.setOutputResolution($0) }
+        )
+    }
+    
+    private var latencyMode: Binding<ContentViewModel.LatencyMode>
+    {
+        Binding(
+            get: { viewModel.latencyMode },
+            set: { viewModel.setLatencyMode($0) }
+        )
+    }
+    
+    private var frameRate: Binding<ContentViewModel.FrameRate>
+    {
+        Binding(
+            get: { viewModel.frameRate },
+            set: { viewModel.setFrameRate($0) }
+        )
+    }
+    
+    private var readyBufferSeconds: Binding<Double>
+    {
+        Binding(
+            get: { viewModel.readyBufferSeconds },
+            set: { viewModel.setReadyBufferSeconds($0) }
+        )
+    }
+    
+    private var waitsToMinimizeStalling: Binding<Bool>
+    {
+        Binding(
+            get: { viewModel.automaticallyWaitsToMinimizeStalling },
+            set: { viewModel.setAutomaticallyWaitsToMinimizeStalling($0) }
+        )
+    }
+
+    private var comparePresented: Binding<Bool>
+    {
+        Binding(
+            get: { viewModel.isShowingCompare },
+            set: { viewModel.setComparePresented($0) }
+        )
+    }
+    
     var body: some View
     {
-        VStack(alignment: .leading, spacing: 14)
+        AirplayCompareSheetView(
+            isPresented: comparePresented,
+            pixelBuffer: viewModel.comparePixelBuffer,
+            frameCount: viewModel.frameCount,
+            onResetCounter: { viewModel.resetCounterToZero() }
+        )
         {
-            Group
+            VStack(alignment: .leading, spacing: 14)
             {
-                if let player = viewModel.player
-                {
-                    VideoPlayer(player: player)
-                }
-                else
-                {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(.quaternary)
-                        .overlay(
-                            Text("Local Preview")
-                                .foregroundStyle(.secondary)
-                        )
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .aspectRatio(16.0 / 9.0, contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+                AirplayServiceView(
+                    viewModel: viewModel.airplayServiceViewModel
+                )
 
-            HStack(spacing: 10)
-            {
-                Circle()
-                    .fill(viewModel.isRunning ? .green : .gray)
-                    .frame(width: 10, height: 10)
-                Text(viewModel.isRunning ? "Streaming" : "Stopped")
-            }
-
-            VStack(alignment: .leading, spacing: 10)
-            {
-                Picker("Resolution", selection: resolutionBinding)
+                HStack(spacing: 10)
                 {
-                    ForEach(ContentViewModel.OutputResolution.allCases)
-                    { resolution in
-                        Text(resolution.rawValue).tag(resolution)
+                    Circle()
+                        .fill(viewModel.isRunning ? .green : .gray)
+                        .frame(width: 10, height: 10)
+                    Text(viewModel.isRunning ? "Streaming" : "Stopped")
+
+                    Spacer(minLength: 0)
+
+                    Button
+                    {
+                        withAnimation(.easeInOut(duration: 0.18))
+                        {
+                            showsOptions.toggle()
+                        }
+                    } label: {
+                        Label(showsOptions ? "Hide Options" : "Options", systemImage: "slider.horizontal.3")
+                            .labelStyle(.titleAndIcon)
                     }
+                    .buttonStyle(.bordered)
                 }
-                .pickerStyle(.segmented)
-                .disabled(!viewModel.canChangeOutputResolution)
-
-                Picker("FPS", selection: frameRateBinding)
+                if showsOptions
                 {
-                    ForEach(ContentViewModel.FrameRate.allCases)
-                    { frameRate in
-                        Text(frameRate.rawValue).tag(frameRate)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .disabled(!viewModel.canChangeOutputResolution)
-
-                VStack(alignment: .leading, spacing: 6)
-                {
-                    Text("Startup Buffer: \(Int(viewModel.readyBufferSeconds))s")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Slider(value: readyBufferSecondsBinding, in: 1...10, step: 1)
-                        .disabled(!viewModel.canChangeOutputResolution)
+                    StreamOptionsView(
+                        canChangeOutputResolution: viewModel.canChangeOutputResolution,
+                        readyBufferSecondsValue: viewModel.readyBufferSeconds,
+                        latencyMode: latencyMode,
+                        resolution: resolution,
+                        frameRate: frameRate,
+                        readyBufferSeconds: readyBufferSeconds,
+                        waitsToMinimizeStalling: waitsToMinimizeStalling
+                    )
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
                 HStack
@@ -289,125 +393,94 @@ struct ContentView: View
 
                     Spacer(minLength: 0)
                 }
-            }
 
-            
+                Text("Frames sent: \(viewModel.frameCount)").monospacedDigit()
 
-            Text("Frames sent: \(viewModel.frameCount)").monospacedDigit()
+                Text(viewModel.isReady ? "Playlist ready (segments buffered)" : "Waiting for initial segments...")
+                    .foregroundStyle(viewModel.isReady ? .green : .secondary)
 
-            Text(viewModel.isReady ? "Playlist ready (segments buffered)" : "Waiting for initial segments...")
-                .foregroundStyle(viewModel.isReady ? .green : .secondary)
-            
-#if os(iOS)
-            if viewModel.isReady
-            {
-                HStack
+                if viewModel.isReady
                 {
-                    Spacer(minLength: 0)
-                    AirPlayRoutePicker().frame(width: 72, height: 72)
-                    Button("COMPARE")
+                    HStack
                     {
-                        viewModel.setComparePresented(true)
+                        Spacer(minLength: 0)
+                        AirPlayRoutePicker().frame(width: 72, height: 72)
+                        Button("COMPARE")
+                        {
+                            viewModel.setComparePresented(true)
+                        }
+                        .buttonStyle(.bordered)
+                        Spacer(minLength: 0)
                     }
-                    .buttonStyle(.bordered)
-                    Spacer(minLength: 0)
                 }
+
+                Spacer(minLength: 0)
+
             }
-#endif
-
-            Spacer(minLength: 0)
-
-        }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .sheet(isPresented: comparePresentedBinding)
-        {
-            CompareFrameView(
-                image: viewModel.compareFrameImage,
-                frameCount: viewModel.frameCount
-            )
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
-    private var resolutionBinding: Binding<ContentViewModel.OutputResolution>
-    {
-        Binding(
-            get: { viewModel.outputResolution },
-            set: { viewModel.setOutputResolution($0) }
-        )
-    }
-
-    private var frameRateBinding: Binding<ContentViewModel.FrameRate>
-    {
-        Binding(
-            get: { viewModel.frameRate },
-            set: { viewModel.setFrameRate($0) }
-        )
-    }
-
-    private var readyBufferSecondsBinding: Binding<Double>
-    {
-        Binding(
-            get: { viewModel.readyBufferSeconds },
-            set: { viewModel.setReadyBufferSeconds($0) }
-        )
-    }
-
-    private var comparePresentedBinding: Binding<Bool>
-    {
-        Binding(
-            get: { viewModel.isShowingCompare },
-            set: { viewModel.setComparePresented($0) }
-        )
-    }
+    
 }
 
-private struct CompareFrameView: View
+private struct StreamOptionsView: View
 {
-    let image: CGImage?
-    let frameCount: Int
+    let canChangeOutputResolution: Bool
+    let readyBufferSecondsValue: Double
+
+    @Binding var latencyMode: ContentViewModel.LatencyMode
+    @Binding var resolution: ContentViewModel.OutputResolution
+    @Binding var frameRate: ContentViewModel.FrameRate
+    @Binding var readyBufferSeconds: Double
+    @Binding var waitsToMinimizeStalling: Bool
 
     var body: some View
     {
-        VStack(alignment: .leading, spacing: 12)
+        VStack(alignment: .leading, spacing: 10)
         {
-            Text("Source Pixel Buffer")
-                .font(.headline)
-
-            Group
+            Picker("Latency Mode", selection: $latencyMode)
             {
-                if let image
-                {
-                    Image(decorative: image, scale: 1.0)
-                        .resizable()
-                        .interpolation(.none)
-                        .scaledToFit()
-                }
-                else
-                {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(.quaternary)
-                        .overlay(
-                            Text("Waiting for source frames...")
-                                .foregroundStyle(.secondary)
-                        )
+                ForEach(ContentViewModel.LatencyMode.allCases)
+                { mode in
+                    Text(mode.rawValue).tag(mode)
                 }
             }
-            .frame(maxWidth: .infinity)
-            .aspectRatio(16.0 / 9.0, contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .pickerStyle(.segmented)
+            .disabled(!canChangeOutputResolution)
 
-            Text("Source frame count: \(frameCount)")
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
+            Picker("Resolution", selection: $resolution)
+            {
+                ForEach(ContentViewModel.OutputResolution.allCases)
+                { resolution in
+                    Text(resolution.rawValue).tag(resolution)
+                }
+            }
+            .pickerStyle(.segmented)
+            .disabled(!canChangeOutputResolution)
 
-            Text("Compare this number against the AirPlay display to estimate lag.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Picker("FPS", selection: $frameRate)
+            {
+                ForEach(ContentViewModel.FrameRate.allCases)
+                { frameRate in
+                    Text(frameRate.rawValue).tag(frameRate)
+                }
+            }
+            .pickerStyle(.segmented)
+            .disabled(!canChangeOutputResolution)
 
-            Spacer(minLength: 0)
+            VStack(alignment: .leading, spacing: 6)
+            {
+                Text("Startup Buffer: \(readyBufferSecondsValue.formatted(.number.precision(.fractionLength(0...2))))s")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Slider(value: $readyBufferSeconds, in: 0.25...10, step: 0.25)
+                    .disabled(!canChangeOutputResolution)
+            }
+
+            Toggle("AVPlayer waits to minimize stalling", isOn: $waitsToMinimizeStalling)
         }
-        .padding()
-        .frame(minWidth: 320, minHeight: 260)
     }
 }

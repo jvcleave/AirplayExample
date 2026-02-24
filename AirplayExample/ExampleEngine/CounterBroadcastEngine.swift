@@ -4,13 +4,14 @@ import Foundation
 
 final class CounterBroadcastEngine
 {
-    let airPlayPlaylistURLString: String
     var onRunningChanged: ((Bool) -> Void)?
     var onReadyChanged: ((Bool) -> Void)?
     var onFrameCountChanged: ((Int) -> Void)?
-    var onCompareFrameChanged: ((CGImage?) -> Void)?
+    var onComparePixelBufferChanged: ((CVPixelBuffer?) -> Void)?
+    var onStreamResetRequested: (() -> Void)?
+    var onStreamConfigureRequested: ((CGSize, Double) -> Void)?
+    var onPixelBufferRendered: ((CVPixelBuffer) -> Void)?
 
-    private let airplayService: AirplayService
     private let frameRenderer = CounterFrameRenderer()
     private var fps: Double
     private let queue = DispatchQueue(label: "CounterBroadcastEngine.queue", qos: .userInitiated)
@@ -25,21 +26,10 @@ final class CounterBroadcastEngine
     private var needsReconfigure = false
     private var isComparePreviewEnabled = false
 
-    init(initialOutputSize: CGSize, airplayService: AirplayService, fps: Double = 15)
+    init(initialOutputSize: CGSize, fps: Double = 15)
     {
-        self.airplayService = airplayService
-        self.airPlayPlaylistURLString = airplayService.airPlayPlaylistURLString
         self.fps = fps
         self.outputSize = initialOutputSize
-
-        airplayService.onPlaylistReady = { [weak self] in
-            self?.queue.async { [weak self] in
-                guard let self else { return }
-                guard !self.isReady else { return }
-                self.isReady = true
-                self.onReadyChanged?(true)
-            }
-        }
     }
 
     deinit
@@ -60,8 +50,11 @@ final class CounterBroadcastEngine
                     width: Int(self.outputSize.width),
                     height: Int(self.outputSize.height)
                 )
-                self.airplayService.configureEncoder(outputSize: self.outputSize, fps: self.fps)
-                self.airplayService.startServerIfNeeded()
+                if self.isComparePreviewEnabled
+                {
+                    self.onComparePixelBufferChanged?(self.pixelBuffer)
+                }
+                self.onStreamConfigureRequested?(self.outputSize, self.fps)
                 self.hasStarted = true
                 self.needsReconfigure = false
             }
@@ -80,6 +73,24 @@ final class CounterBroadcastEngine
             guard self.isRunning else { return }
             self.isRunning = false
             self.onRunningChanged?(false)
+
+            if self.isReady
+            {
+                self.isReady = false
+                self.onReadyChanged?(false)
+            }
+
+            // Treat the next start as a fresh stream so readiness is re-earned.
+            self.needsReconfigure = self.hasStarted
+        }
+    }
+
+    func resetCounterToZero()
+    {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.counter = 0
+            self.onFrameCountChanged?(0)
         }
     }
 
@@ -138,12 +149,32 @@ final class CounterBroadcastEngine
             guard let self else { return }
             guard !self.isRunning else { return }
 
-            let clampedSeconds = max(0.1, seconds)
-            guard self.airplayService.readyBufferSeconds != clampedSeconds else { return }
-
-            self.airplayService.setReadyBufferSeconds(clampedSeconds)
+            _ = max(0.25, seconds)
 
             // Treat as a stream config change so the next start rebuilds readiness state.
+            self.needsReconfigure = self.hasStarted
+
+            if self.hasStarted
+            {
+                if self.isReady
+                {
+                    self.isReady = false
+                    self.onReadyChanged?(false)
+                }
+                self.onFrameCountChanged?(0)
+            }
+        }
+    }
+
+    func setSegmentDurationSeconds(_ seconds: Double)
+    {
+        queue.async { [weak self] in
+            guard let self else { return }
+            guard !self.isRunning else { return }
+
+            _ = max(0.1, seconds)
+
+            // Segment duration changes require encoder/server playlist regeneration on next start.
             self.needsReconfigure = self.hasStarted
 
             if self.hasStarted
@@ -163,10 +194,24 @@ final class CounterBroadcastEngine
         queue.async { [weak self] in
             guard let self else { return }
             self.isComparePreviewEnabled = isEnabled
-            if !isEnabled
+            if isEnabled
             {
-                self.onCompareFrameChanged?(nil)
+                self.onComparePixelBufferChanged?(self.pixelBuffer)
             }
+            else
+            {
+                self.onComparePixelBufferChanged?(nil)
+            }
+        }
+    }
+
+    func handlePlaylistReady()
+    {
+        queue.async { [weak self] in
+            guard let self else { return }
+            guard !self.isReady else { return }
+            self.isReady = true
+            self.onReadyChanged?(true)
         }
     }
 
@@ -182,14 +227,9 @@ final class CounterBroadcastEngine
             guard self.isRunning, let pixelBuffer = self.pixelBuffer else { return }
 
             self.frameRenderer.render(counter: self.counter, fps: self.fps, size: self.outputSize, into: pixelBuffer)
-            self.airplayService.addPixelBuffer(pixelBuffer)
+            self.onPixelBufferRendered?(pixelBuffer)
             self.counter += 1
             self.onFrameCountChanged?(self.counter)
-
-            if self.isComparePreviewEnabled, self.counter.isMultiple(of: 3)
-            {
-                self.onCompareFrameChanged?(self.frameRenderer.makePreviewImage(from: pixelBuffer))
-            }
         }
         frameTimer = timer
         timer.resume()
@@ -197,7 +237,7 @@ final class CounterBroadcastEngine
 
     private func resetPipelineStateForNewConfiguration()
     {
-        airplayService.resetStream()
+        onStreamResetRequested?()
         pixelBuffer = nil
         counter = 0
         if isReady
@@ -205,7 +245,7 @@ final class CounterBroadcastEngine
             isReady = false
             onReadyChanged?(false)
         }
-        onCompareFrameChanged?(nil)
+        onComparePixelBufferChanged?(nil)
         onFrameCountChanged?(0)
     }
 

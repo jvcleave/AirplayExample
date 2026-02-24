@@ -142,3 +142,8 @@ This app is an example consumer of the service, not a separate architecture.
 - `ContentView`: SwiftUI layout only
 
 This split is intentional so you can replace the counter renderer/engine with your own pipeline while keeping `AirplayService` unchanged.
+
+### References
+Derived from [swifter](https://github.com/httpswift/swifter)  and [VideoCreator](https://github.com/fuziki/VideoCreator)
+
+Thanks!

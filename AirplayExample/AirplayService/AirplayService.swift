@@ -9,6 +9,7 @@ final class AirplayService
 {
     let port: UInt16
     private(set) var readyBufferSeconds: Double
+    private(set) var segmentDurationSeconds: Double
 
     var onPlaylistReady: (() -> Void)?
 
@@ -16,10 +17,11 @@ final class AirplayService
     private let server = HLSServer()
     private var didSignalReady = false
 
-    init(port: UInt16 = 8080, readyBufferSeconds: Double = 5.0)
+    init(port: UInt16 = 8080, readyBufferSeconds: Double = 5.0, segmentDurationSeconds: Double = 1.0)
     {
         self.port = port
         self.readyBufferSeconds = readyBufferSeconds
+        self.segmentDurationSeconds = max(0.1, segmentDurationSeconds)
     }
 
     var playlistURLString: String { "http://127.0.0.1:\(port)/hls.m3u8" }
@@ -44,6 +46,8 @@ final class AirplayService
 
     func configureEncoder(outputSize: CGSize, fps: Double)
     {
+        server.segmentDurationSeconds = segmentDurationSeconds
+
         let encoder = HLSEncoder()
         self.encoder = encoder
 
@@ -58,7 +62,7 @@ final class AirplayService
             self.onPlaylistReady?()
         }
 
-        encoder.setup(outputSize: outputSize, fps: fps)
+        encoder.setup(outputSize: outputSize, fps: fps, segmentDurationSeconds: segmentDurationSeconds)
     }
 
     func addPixelBuffer(_ pixelBuffer: CVPixelBuffer)
@@ -68,7 +72,12 @@ final class AirplayService
 
     func setReadyBufferSeconds(_ seconds: Double)
     {
-        readyBufferSeconds = max(0.1, seconds)
+        readyBufferSeconds = max(0.25, seconds)
+    }
+
+    func setSegmentDurationSeconds(_ seconds: Double)
+    {
+        segmentDurationSeconds = max(0.1, seconds)
     }
 
     private static func preferredIPv4() -> String?
