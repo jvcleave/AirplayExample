@@ -8,6 +8,7 @@
 
 /* Begin PBXFileReference section */
 		03030B7A2F4D7CA300929850 /* AirplayExample.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AirplayExample.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		03030BBE2F4DAA7D00929850 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -32,6 +33,7 @@
 		03030B712F4D7CA300929850 = {
 			isa = PBXGroup;
 			children = (
+				03030BBE2F4DAA7D00929850 /* README.md */,
 				03030B7C2F4D7CA300929850 /* AirplayExample */,
 				03030B7B2F4D7CA300929850 /* Products */,
 			);
@@ -254,8 +256,8 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-					INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
-					INFOPLIST_KEY_NSLocalNetworkUsageDescription = "AirplayExample streams video to AirPlay devices on your local network.";
+				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "AirplayExample streams video to AirPlay devices on your local network.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -300,8 +302,8 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-					INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
-					INFOPLIST_KEY_NSLocalNetworkUsageDescription = "AirplayExample streams video to AirPlay devices on your local network.";
+				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "AirplayExample streams video to AirPlay devices on your local network.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;

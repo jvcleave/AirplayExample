@@ -10,101 +10,73 @@ import Foundation
 
 final class HLSServer
 {
-    private let airplayServer = AirplayHttpServer()
-    private let doWebserver: Bool
-    
-    
+    private let httpServer = HttpServer()
+
     public var sequences: [(sequence: Int, data: Data)] = []
     private var initData: Data?
     private var sequence: Int = -1
 
     public var segmentDurationSeconds: Double = 1.0
+    public var sessionToken: String = UUID().uuidString
     private(set) var isRunning = false
     private var isConfigured = false
-
-    init(doWebserver: Bool = true)
-    {
-        self.doWebserver = doWebserver
-    }
 
     private func configureRoutesIfNeeded()
     {
         guard !isConfigured else { return }
         isConfigured = true
 
-        if doWebserver
-        {
-            airplayServer["/hello"] = { _ in
-                let body = """
-                <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-                <head><title>VideoCreator</title></head>
-                <video id="video" width="240" height="360" autoplay muted></video>
-                <script>
-                  var video = document.getElementById('video');
-                  var videoSrc = 'hls.m3u8';
-                  if (Hls.isSupported()) {
-                    var hls = new Hls();
-                    hls.loadSource(videoSrc);
-                    hls.attachMedia(video);
-                  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                    video.src = videoSrc;
-                  }
-                </script>
-                """
-                return .ok(.htmlBody(body))
-            }
-        }
-
-        airplayServer["/hls.m3u8"] = { [weak self] _ in
+        httpServer["/hls.m3u8"] = { [weak self] _ in
             guard let self,
                   self.sequence >= 5,
                   let m3u8Data = self.m3u8.data(using: .utf8)
             else
             {
-                return .notFound()
+                return .notFound
             }
-            return .ok(.data(m3u8Data, contentType: "application/x-mpegURL"))
+            return .ok(data: m3u8Data, contentType: "application/x-mpegURL")
         }
 
-        airplayServer["/init.mp4"] = { [weak self] _ in
+        httpServer["/init.mp4"] = { [weak self] _ in
             guard let self, let initData = self.initData
             else
             {
-                return .notFound()
+                return .notFound
             }
-            return .ok(.data(initData, contentType: "video/mp4"))
+            return .ok(data: initData, contentType: "video/mp4")
         }
 
-        airplayServer["/files/:path"] = { [weak self] request in
-            guard let self else { return .notFound() }
+        httpServer["/files/:path"] = { [weak self] path in
+            guard let self else { return .notFound }
 
             guard let data = self.sequences.first(where: {
-                request.path.hasPrefix("/files/sequence\($0.sequence)")
+                path.hasPrefix("/files/sequence\($0.sequence)")
             })?.data
             else
             {
-                return .notFound()
+                return .notFound
             }
 
-            return .ok(.data(data, contentType: "video/iso.segment"))
+            return .ok(data: data, contentType: "video/iso.segment")
         }
     }
 
     var m3u8: String
     {
         let durationStr = String(format: "%1.5f", segmentDurationSeconds)
+        let query = "?sid=\(sessionToken)"
         return """
         #EXTM3U
         #EXT-X-TARGETDURATION:\(Int(ceil(segmentDurationSeconds)))
         #EXT-X-VERSION:9
         #EXT-X-MEDIA-SEQUENCE:\(sequence - 2)
-        #EXT-X-MAP:URI="init.mp4"
+        #EXT-X-MAP:URI="init.mp4\(query)"
         #EXTINF:\(durationStr),
-        files/sequence\(sequence - 2).m4s
+        files/sequence\(sequence - 2).m4s\(query)
         #EXTINF:\(durationStr),
-        files/sequence\(sequence - 1).m4s
+        files/sequence\(sequence - 1).m4s\(query)
         #EXTINF:\(durationStr),
-        files/sequence\(sequence).m4s
+        files/sequence\(sequence).m4s\(query)
         """
     }
 
@@ -125,13 +97,20 @@ final class HLSServer
         }
     }
 
+    public func resetStream()
+    {
+        sequences.removeAll(keepingCapacity: true)
+        initData = nil
+        sequence = -1
+    }
+
     public func start(port: UInt16 = 8080)
     {
         guard !isRunning else { return }
         configureRoutesIfNeeded()
         do
         {
-            try airplayServer.start(port, forceIPv4: true, priority: .default)
+            try httpServer.start(port, priority: .default)
             isRunning = true
             print("✅ HLS Server started on port \(port)")
         }
