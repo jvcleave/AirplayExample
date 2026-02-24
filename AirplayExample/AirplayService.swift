@@ -18,6 +18,14 @@ final class AirplayService
         self.port = port
     }
 
+    var playlistURLString: String { "http://127.0.0.1:\(port)/hls.m3u8" }
+    var localIPAddress: String? { LocalNetworkAddress.preferredIPv4() }
+    var airPlayPlaylistURLString: String
+    {
+        let host = localIPAddress ?? "127.0.0.1"
+        return "http://\(host):\(port)/hls.m3u8"
+    }
+
     func startServerIfNeeded()
     {
         server.start(port: port)
